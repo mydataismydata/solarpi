@@ -17,7 +17,7 @@ header (or globally from the gear menu).
 
 | Dark | Light |
 |------|-------|
-| ![Dashboard, dark theme](docs/img/solar-pi-dark.jpg) | ![Dashboard, light theme](docs/img/solar-pi-light.jpg) |
+| ![Dashboard, dark theme](docs/img/solar-pi-dark-w.jpg) | ![Dashboard, light theme](docs/img/solar-pi-light.jpg) |
 
 The same view with the wheels switched to amps:
 
