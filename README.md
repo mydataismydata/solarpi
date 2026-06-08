@@ -67,26 +67,6 @@ Pure-stdlib, no installs needed:
 python tests/test_codec.py
 ```
 
-## Features
-
-- [x] Protocol core ported + tested (codec, SRNE decode) — 15/15 green
-- [x] Async TCP client + offline simulator — end-to-end, 19/19 green
-- [x] SQLite time-series store — WAL, downsampling, prune
-- [x] Poll loop — merge + has_core resilience, 29/29 green
-- [x] FastAPI server + JSON API (/api/current, /api/history, /api/health) — 33/33 green
-- [x] Dashboard UI — uPlot, styled to the Android app's palette, fault catalog
-- [x] Custom graphics — radial power wheels (PV/Load/AC-Input), battery SOC bar, power-flow diagram
-- [x] Energy tracking — hourly/daily/monthly roll-ups + lifetime totals (/api/energy) — 39/39 green
-- [x] Settings menu — show/hide AC Input + energy trends (persisted)
-- [x] systemd user services (solardash + solardash-sim), linger=yes, auto-restart
-- [x] Deploy on-site — live on the real inverter (192.168.3.38)
-- BLE battery (per-cell):
-  - [x] BMS discovery — 4 ECO-LFP48100 packs found (svc 0xFF00 / ff01 / ff02)
-  - [x] JBD parser (0x03 basic info + 0x04 cells) — validated vs real frames
-  - [x] BLE poller for all 4 packs + bank aggregation (auto-capacity, cell balance, temps)
-  - [x] Dashboard integration (per-cell detail, real temps, auto ETA capacity) — 54/54 green
-  - [x] BLE access from the systemd user service + persistent rfkill unblock (bt-unblock.service)
-
 ## Setting up a Raspberry Pi Zero 2 W from scratch
 
 This is the whole path from a blank microSD to a headless dashboard that auto-starts
