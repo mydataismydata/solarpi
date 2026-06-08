@@ -87,7 +87,7 @@ In Raspberry Pi Imager:
 4. Click **Next → Edit Settings** and fill in the OS-customisation so the Pi comes
    up on the network with no monitor/keyboard:
    - **Hostname:** `solarpi` (so it answers at `solarpi.local`).
-   - **Username / password:** e.g. `antarctica` (the `deploy.ps1` default assumes
+   - **Username / password:** e.g. `myusername` (the `deploy.ps1` default assumes
      this user — change both to match if you pick another).
    - **Wi-Fi:** SSID, password, and your **Wi-Fi country** (required, or the radio
      stays off).
@@ -102,11 +102,11 @@ In Raspberry Pi Imager:
 The Pi joins your Wi-Fi and advertises itself over mDNS:
 
 ```
-ssh antarctica@solarpi.local
+ssh myusername@solarpi.local
 ```
 
 If `.local` doesn't resolve (some networks block mDNS), find its IP in your
-router's client list and `ssh antarctica@<ip>` instead. Then update everything:
+router's client list and `ssh myusername@<ip>` instead. Then update everything:
 
 ```
 sudo apt update && sudo apt full-upgrade -y
@@ -152,7 +152,7 @@ default (see `solardash/config.py`); a real deployment usually sets:
 
 ```ini
 # Inverter — the Solarman Wi-Fi dongle on the SRNE/Eco-Worthy inverter
-SOLAR_INVERTER_IP=192.168.3.38
+SOLAR_INVERTER_IP=192.168.#.#
 SOLAR_INVERTER_SERIAL=1234567890     # the serial printed on the dongle
 SOLAR_POLL_INTERVAL=10
 
@@ -255,7 +255,7 @@ Pi to `git pull` and restart the service:
 
 ```powershell
 .\deploy.ps1                              # default host: antarctica@solarpi
-.\deploy.ps1 -PiHost antarctica@192.168.3.50
+.\deploy.ps1 -PiHost yourusername@192.168.#.#
 .\deploy.ps1 -Pip                         # also pip install (when requirements.txt changed)
 ```
 
