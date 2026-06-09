@@ -40,6 +40,11 @@ A rolling line chart of Solar / Load / Battery power, zoomable from the last hou
 |---------------|-------------|
 | ![Power history, last 24 hours](docs/img/solar-pi-power-history-24h.jpg) | ![Power history, last 7 days](docs/img/solar-pi-power-history-7d.jpg) |
 
+## Command line interface
+When connecting via a terminal or Raspberry Pi Connect, type "solar" to see a semi-graphical display of the power data.
+
+![Command line results](docs/img/solar-pi-raspberry-pi-connect.jpg)
+
 ## Data sources
 
 | Source | Transport | Status |
@@ -48,11 +53,6 @@ A rolling line chart of Solar / Load / Battery power, zoomable from the last hou
 | JBD BMS (per-cell battery) | BLE (svc 0xFF00 / notify 0xFF01) | **live** |
 
 The inverter also reports battery SOC / voltage / current / temp, so the inverter feed alone covers the core picture; BLE adds per-cell granularity.
-
-## Command line interface
-When connecting via a terminal or Raspberry Pi Connect, type "solar" to see a semi-graphical display of the power data.
-
-![Command line results](docs/img/solar-pi-raspberry-pi-connect.jpg)
 
 ## Layout
 
