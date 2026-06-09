@@ -49,6 +49,11 @@ A rolling line chart of Solar / Load / Battery power, zoomable from the last hou
 
 The inverter also reports battery SOC / voltage / current / temp, so the inverter feed alone covers the core picture; BLE adds per-cell granularity.
 
+## Command line interface
+When connecting via a terminal or Raspberry Pi Connect, type "solar" to see a semi-graphical display of the power data.
+
+![Command line results](docs/img/solar-pi-raspberry-pi-connect.jpg)
+
 ## Layout
 
 ```
