@@ -11,9 +11,7 @@ vectors.
 
 ## Screenshots
 
-The dashboard has a light and a dark theme, and every power wheel can be flipped
-between watts (**W**) and amps (**A**) — per-tile, from the toggle in each card's
-header (or globally from the gear menu).
+The dashboard has a light and a dark theme.
 
 | Dark | Light |
 |------|-------|
