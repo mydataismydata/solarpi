@@ -1,13 +1,8 @@
 # Solar Tracking Dashboard
 
-A self-hosted dashboard for an SRNE / Eco-Worthy hybrid solar inverter and JBD
-battery BMS, running headless on a **Raspberry Pi Zero 2 W**. It polls live
-telemetry, stores a time-series history (which the companion Android app never
-kept), and serves current + historical charts over the local network.
+A self-hosted dashboard for an SRNE / Eco-Worthy hybrid solar inverter and JBD battery BMS, running headless on a **Raspberry Pi Zero 2 W**. It polls live telemetry, stores a time-series history, and serves current + historical charts over the local network.
 
-The protocol layer is a faithful Python port of the companion "Private Solar
-Monitoring" Android app, validated byte-for-byte against the same reference
-vectors.
+The protocol layer is a faithful Python port of the companion "Private Solar Monitoring" Android app, validated byte-for-byte against the same reference vectors.
 
 ## Screenshots
 
@@ -23,26 +18,23 @@ The same view with the wheels switched to amps:
 |-------------|--------------|
 | ![Dashboard, dark theme, amps](docs/img/solar-pi-dark-amps.jpg) | ![Dashboard, light theme, amps](docs/img/solar-pi-light-amps.jpg) |
 
-At a glance: PV / load radial wheels, a power-flow diagram, the battery bank with
-per-pack state of charge (four ECO-LFP48100 packs here), live temperatures, fault
-status, an energy-trends chart with CSV export, and a rolling power-history graph.
+At a glance: PV / load (optional grid/generator power) radial wheels, a power-flow diagram, the battery bank with per-pack state of charge (four ECO-LFP48100 packs here), live temperatures, fault status, an energy-trends chart with CSV export, and a rolling power-history graph.
 
 ### Energy trends — daily, monthly, yearly
 
-The energy-trends chart rolls input vs. output up by hour, day, or month; hover any
-bar for the exact Solar PV / AC Output / Battery split. These two also show the
-**AC Input · Grid/Gen** wheel, which appears when grid or generator power is wired in.
+The energy-trends chart rolls input vs. output up by hour, day, or month; hover over any bar for the exact Solar PV / AC Output / Battery split. These two also show the **AC Input · Grid/Gen** wheel, which appears when grid or generator power is wired in.
 
 | Monthly | Yearly |
 |---------|--------|
 | ![Energy trends, monthly](docs/img/solar-pi-dark-w-monthly.jpg) | ![Energy trends, yearly](docs/img/solar-pi-dark-w-yearly.jpg) |
 
+Click on any bar to see the details.
+
 ![Energy trends detail with hover tooltip](docs/img/solar-pi-energy-trends-detail.jpg)
 
 ### Power history
 
-A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out
-to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store.
+A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store.
 
 | Last 24 hours | Last 7 days |
 |---------------|-------------|
@@ -55,8 +47,7 @@ to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-se
 | SRNE/Eco-Worthy inverter | TCP 8899 (Solarman V5 + Modbus-RTU) | **live** |
 | JBD BMS (per-cell battery) | BLE (svc 0xFF00 / notify 0xFF01) | **live** |
 
-The inverter also reports battery SOC / voltage / current / temp, so the inverter
-feed alone covers the core picture; BLE adds per-cell granularity.
+The inverter also reports battery SOC / voltage / current / temp, so the inverter feed alone covers the core picture; BLE adds per-cell granularity.
 
 ## Layout
 
@@ -88,9 +79,7 @@ python tests/test_codec.py
 
 ## Setting up a Raspberry Pi Zero 2 W from scratch
 
-This is the whole path from a blank microSD to a headless dashboard that auto-starts
-on boot and is reachable from anywhere via Raspberry Pi Connect. It targets a
-**Pi Zero 2 W**, but any Pi with Wi-Fi + Bluetooth works.
+This is the whole path from a blank microSD to a headless dashboard that auto-starts on boot and is reachable from anywhere via Raspberry Pi Connect. It targets a **Pi Zero 2 W**, but any Pi with Wi-Fi + Bluetooth works.
 
 You'll need: a Pi Zero 2 W, a microSD card (8 GB+), a 5 V power supply, and the
 [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your computer.
@@ -124,8 +113,7 @@ The Pi joins your Wi-Fi and advertises itself over mDNS:
 ssh myusername@solarpi.local
 ```
 
-If `.local` doesn't resolve (some networks block mDNS), find its IP in your
-router's client list and `ssh myusername@<ip>` instead. Then update everything:
+If `.local` doesn't resolve (some networks block mDNS), find its IP in your router's client list and `ssh myusername@<ip>` instead. Then update everything:
 
 ```
 sudo apt update && sudo apt full-upgrade -y
