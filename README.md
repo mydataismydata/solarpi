@@ -41,9 +41,119 @@ A rolling line chart of Solar / Load / Battery power, zoomable from the last hou
 | ![Power history, last 24 hours](docs/img/solar-pi-power-history-24h.jpg) | ![Power history, last 7 days](docs/img/solar-pi-power-history-7d.jpg) |
 
 ## Command line interface
-When connecting via a terminal or Raspberry Pi Connect, type "solar" to see a semi-graphical display of the power data.
+
+When connecting via a terminal or Raspberry Pi Connect, type `solar` for a semi-graphical
+view of the live power data — no browser needed.
 
 ![Command line results](docs/img/solar-pi-raspberry-pi-connect.jpg)
+
+| Command | What it shows |
+|---------|---------------|
+| `solar` | One-shot status: PV / Load / Battery (SOC, power, ETA), temperatures, faults. |
+| `solar in` | Same, plus the AC-input (grid / generator) line. |
+| `solar usage` | Today's **and** yesterday's energy totals — Solar in / Load out / Battery charged / discharged (kWh). |
+| `solar watch` | Auto-refreshing status (every 5 s, with lifetime totals). `Ctrl+C` to quit. |
+| `solar export-hourly` | Write today's per-hour energy to a CSV. |
+| `solar snapshot` | Write a self-contained HTML snapshot of the dashboard. |
+
+The CLI is stdlib-only and just reads the local JSON API (override the target with
+`SOLAR_DASH_URL`, default `http://127.0.0.1:8000`).
+
+### Offline snapshot & CSV export
+
+`solar snapshot` captures the live dashboard into a **single self-contained HTML file** — the
+radial PV/Load dials, the power-flow diagram, the battery bank with per-pack state of charge,
+the Today strip, and a **clickable 24-hour energy-trends chart** — with no JavaScript
+frameworks, no network calls, and no external files. Copy it to your laptop and open it in any
+browser for a point-in-time view of the system, even fully offline. It inlines the dashboard's
+own stylesheet, so it always matches the live look.
+
+`solar export-hourly` writes today's hourly energy as CSV (`hour, solar_kwh, load_kwh,
+battery_charged_kwh, battery_discharged_kwh`) for spreadsheets.
+
+Both write timestamped files to **`~/solardash/exports/`** (override with `SOLAR_EXPORT_DIR`):
+
+```
+solar snapshot
+# ✔ snapshot  dashboard captured
+#   /home/<piuser>/solardash/exports/solar-snapshot-2026-06-11_0930.html
+```
+
+See **[Remote access & pulling files off the Pi](#remote-access--pulling-files-off-the-pi-tailscale)**
+below for getting those files onto your machine from anywhere.
+
+## Remote access & pulling files off the Pi (Tailscale)
+
+Raspberry Pi Connect (setup [step 3](#3-raspberry-pi-connect-remote-access-from-anywhere)) gives
+you a remote **shell**, but not file transfer — and if the Pi is behind CGNAT (e.g. Starlink or
+most cellular ISPs) there's no inbound route for SSH/SCP either. [Tailscale](https://tailscale.com)
+solves both: it's WireGuard with NAT traversal, so every device dials **out** to a relay and they
+meet on a private network. No port-forwarding, works through CGNAT, and the Pi gets a stable
+`100.x.y.z` address reachable from anywhere. The free plan is plenty for a personal setup.
+
+### Set it up on the Pi
+
+In a Connect shell (or any terminal on the Pi):
+
+```
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+`tailscale up` prints a login URL — open it in a browser, sign in (this creates your free
+account on first use), and the Pi joins your tailnet. Then note its address and make sure the
+SSH server is running (needed for file transfer):
+
+```
+tailscale ip -4                    # -> 100.x.y.z   (the Pi's Tailscale address)
+sudo systemctl enable --now ssh    # OpenSSH server, for scp / SFTP / WinSCP
+```
+
+Two optional niceties in the [admin console](https://login.tailscale.com/admin):
+- **Disable key expiry** on the Pi (its `…` menu) so an always-on server never needs re-auth.
+- Enable **MagicDNS** (DNS tab) so you can use the name `solarpi` instead of the IP everywhere below.
+
+Install Tailscale on your computer too (Windows / macOS: <https://tailscale.com/download>), sign
+in to the **same** account, and the two are now on one private network.
+
+### Reach the live dashboard from anywhere
+
+```
+http://100.x.y.z:8000          # or http://solarpi:8000 with MagicDNS
+```
+
+### Pull snapshots / exports to your machine
+
+The files live in `~/solardash/exports/` on the Pi. Replace `<piuser>` with your Pi login and
+`100.x.y.z` with the Pi's Tailscale address (or `solarpi` with MagicDNS).
+
+**Windows — PowerShell** (`scp` ships with Windows 10/11):
+
+```powershell
+cd ~\Downloads
+scp <piuser>@100.x.y.z:"~/solardash/exports/*" .                       # everything
+scp <piuser>@100.x.y.z:"~/solardash/exports/solar-snapshot-*.html" .   # just snapshots
+```
+
+**Windows — WinSCP** (GUI drag-and-drop). New Site →
+- **File protocol:** SFTP
+- **Host name:** `100.x.y.z` (or `solarpi`) · **Port:** `22`
+- **User name:** `<piuser>` · **Password:** your Pi password
+
+Log in, browse to `/home/<piuser>/solardash/exports`, and drag files across.
+
+**macOS / Linux — terminal:**
+
+```bash
+scp '<piuser>@100.x.y.z:~/solardash/exports/*' ~/Downloads/
+```
+
+…or in **Finder**: ⌘K (Connect to Server) → `sftp://100.x.y.z` → browse to the exports folder.
+
+> **Tailscale SSH (optional):** `sudo tailscale up --ssh` lets you `ssh <piuser>@100.x.y.z` with
+> no password — it authenticates by your tailnet identity. It also carries `scp`, but the WinSCP
+> GUI is happiest talking to the regular OpenSSH server, so enabling `sshd` (above) is the safe
+> bet for file transfer.
 
 ## Data sources
 
