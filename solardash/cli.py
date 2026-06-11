@@ -4,7 +4,7 @@ Connect remote shell). Reads the local JSON API; stdlib-only, no dependencies.
 
     solar           one-shot status (AC input hidden)
     solar in        also show the AC input line
-    solar usage     today's PV / Load / Battery energy totals (the dashboard's Today strip)
+    solar usage     today's + yesterday's PV / Load / Battery energy totals (the dashboard's Today strip)
     solar watch     refresh every few seconds, with lifetime totals (Ctrl+C to quit)
     solar watch in  watch + AC input
 
@@ -71,33 +71,45 @@ def statline(label, value, bar_str, trailing=""):
     return f"  {LBL(label)}{value.rjust(VAL_W)}  {bar_str}  {trailing}".rstrip()
 
 
-def today_bucket():
-    """Today's day-bucket from the daily energy roll-up — matched by local date, exactly as
-    the dashboard's Today strip does (GET /api/energy?period=day, find bucket == YYYY-MM-DD)."""
+def day_buckets():
+    """Recent daily energy buckets keyed by local date (YYYY-MM-DD), from the daily roll-up
+    (GET /api/energy?period=day) — the same source as the dashboard's Today strip."""
     now = time.localtime()
-    key = time.strftime("%Y-%m-%d", now)
-    start = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
-    ej = get(f"/api/energy?period=day&start={start}")
-    for b in ej.get("buckets", []):
-        if b.get("bucket") == key:
-            return b
-    return {}
+    today_mid = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+    ej = get(f"/api/energy?period=day&start={today_mid - 86400}")  # window covers yesterday + today
+    return {b.get("bucket"): b for b in ej.get("buckets", [])}
 
 
 def render_usage():
-    """`solar usage` — today's PV in / Load out / Battery charged / discharged (kWh)."""
+    """`solar usage` — today's and yesterday's PV in / Load out / Battery charged / discharged (kWh)."""
     try:
-        b = today_bucket()
+        days = day_buckets()
     except Exception:
         return RED("offline ●") + DIM(f"  dashboard unreachable ({BASE})")
-    pv, load = b.get("pv_kwh"), b.get("load_kwh")
-    chg, dis = b.get("charge_kwh"), b.get("discharge_kwh")
-    peak = max(pv or 0, load or 0, chg or 0, dis or 0) or 1  # scale bars to the largest, so they compare
-    L = [f"{BOLD('TODAY')}    {DIM(time.strftime('%a %d %b'))}"]
-    L.append(statline("Solar", f"{fmt(pv, 1)} kWh", YEL(bar((pv or 0) / peak)), DIM("solar generated")))
-    L.append(statline("Load", f"{fmt(load, 1)} kWh", MAG(bar((load or 0) / peak)), DIM("consumed")))
-    L.append(statline("Batt +", f"{fmt(chg, 1)} kWh", GREEN(bar((chg or 0) / peak)), DIM("charged")))
-    L.append(statline("Batt -", f"{fmt(dis, 1)} kWh", YEL(bar((dis or 0) / peak)), DIM("discharged")))
+    now = time.localtime()
+    today_mid = time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1))
+    yest = time.localtime(today_mid - 12 * 3600)  # midday yesterday — robust across DST shifts
+    today = days.get(time.strftime("%Y-%m-%d", now), {})
+    yesterday = days.get(time.strftime("%Y-%m-%d", yest), {})
+
+    def vals(d):
+        return [d.get("pv_kwh"), d.get("load_kwh"), d.get("charge_kwh"), d.get("discharge_kwh")]
+
+    peak = max([v or 0 for v in vals(today) + vals(yesterday)]) or 1  # shared scale so the days compare
+
+    def block(title, when, d):
+        pv, load, chg, dis = vals(d)
+        return [
+            f"{BOLD(title)}    {DIM(when)}",
+            statline("Solar", f"{fmt(pv, 1)} kWh", YEL(bar((pv or 0) / peak)), DIM("solar generated")),
+            statline("Load", f"{fmt(load, 1)} kWh", MAG(bar((load or 0) / peak)), DIM("consumed")),
+            statline("Batt +", f"{fmt(chg, 1)} kWh", GREEN(bar((chg or 0) / peak)), DIM("charged")),
+            statline("Batt -", f"{fmt(dis, 1)} kWh", YEL(bar((dis or 0) / peak)), DIM("discharged")),
+        ]
+
+    L = block("TODAY", time.strftime("%a %d %b", now), today)
+    L.append("")
+    L += block("YESTERDAY", time.strftime("%a %d %b", yest), yesterday)
     return "\n".join(L)
 
 
