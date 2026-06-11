@@ -6,13 +6,15 @@ Connect remote shell). Reads the local JSON API; stdlib-only, no dependencies.
     solar in        also show the AC input line
     solar usage     today's + yesterday's PV / Load / Battery energy totals (the dashboard's Today strip)
     solar export-hourly   write today's hourly energy to a CSV on the Pi (to pull remotely)
+    solar snapshot  write a self-contained HTML snapshot of the dashboard (to pull + open offline)
     solar watch     refresh every few seconds, with lifetime totals (Ctrl+C to quit)
     solar watch in  watch + AC input
 
 Override the target with SOLAR_DASH_URL (default http://127.0.0.1:8000).
-Override the CSV export folder with SOLAR_EXPORT_DIR (default ~/solardash/exports).
+Override the export folder (CSV + HTML) with SOLAR_EXPORT_DIR (default ~/solardash/exports).
 """
 import csv
+import html
 import json
 import os
 import sys
@@ -144,6 +146,226 @@ def export_hourly():
             + DIM(f"    cat {path}"))
 
 
+# --- `solar snapshot`: a self-contained static HTML view of the dashboard ----------------
+# Server-rendered here so the file always displays offline (no live fetches, no JS, no CDN).
+# Palette mirrors solardash/web/style.css so it reads like the real dashboard.
+_SNAPSHOT_CSS = """
+:root{--bg:#0E1116;--surface:#161A21;--surface2:#1C212B;--line:#262C37;--txt:#EAF0F6;
+--txt2:#9BA7B6;--txt3:#626C7B;--charge:#34D399;--discharge:#FBBF24;--load:#9C8CFB;--pv:#FBBF24;
+--fault:#F87171;--accent:#22D3EE;--track:rgba(255,255,255,.07);
+--mono:ui-monospace,"Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.45 var(--sans);
+-webkit-font-smoothing:antialiased;padding-bottom:32px}
+.topbar{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;
+gap:12px;flex-wrap:wrap;padding:14px 18px;background:var(--bg);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{font-size:17px;font-weight:650;margin:0}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--txt3)}
+.dot.live{background:var(--charge)}.dot.stale{background:var(--discharge)}.dot.down{background:var(--fault)}
+.badge{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--txt3);
+border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+.status{color:var(--txt2);font-size:13px;font-variant-numeric:tabular-nums}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px}
+.panel-title{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--txt2);
+font-weight:600;margin:0 0 12px}
+.today{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.hero{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px}
+@media(min-width:760px){.today{grid-template-columns:repeat(4,1fr)}.hero{grid-template-columns:repeat(4,1fr)}}
+.lt{background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:12px}
+.lt label{display:block;font-size:11px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px}
+.lt .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:4px}
+.lt .v small,.big small,.pc small{font-size:12px;color:var(--txt2);font-weight:500;margin-left:3px}
+.lt.in .v{color:var(--pv)}.lt.out .v{color:var(--load)}
+.tile .k{font-size:12px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px}
+.big{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;margin:6px 0 2px}
+.sub{font-size:12.5px;color:var(--txt2)}
+.bar{height:8px;border-radius:5px;background:var(--track);overflow:hidden;margin:10px 0 6px}
+.bar>i{display:block;height:100%;border-radius:5px}
+.section{margin-top:14px}
+.legend{display:flex;gap:18px;font-size:12px;color:var(--txt2);margin-bottom:10px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.packs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.pack{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px}
+.pack .nm{font-size:12px;color:var(--txt2)}
+.pack .pc{font-size:20px;font-weight:650;margin-top:2px}
+.fault{color:var(--fault);font-weight:600}.ok{color:var(--charge);font-weight:600}
+.foot{color:var(--txt3);font-size:12px;margin-top:20px;text-align:center}
+.empty{color:var(--txt3);font-size:13px;padding:8px 0}
+svg{display:block;width:100%;height:auto}svg text{font-family:var(--mono)}
+"""
+
+
+def _svg_hourly(buckets):
+    """Inline SVG: today's hourly Solar vs Load (grouped bars, kWh). No JS, no external deps."""
+    if not buckets:
+        return '<div class="empty">No hourly data recorded yet today.</div>'
+    pv = [b.get("pv_kwh") or 0 for b in buckets]
+    load = [b.get("load_kwh") or 0 for b in buckets]
+    labels = [(b.get("bucket") or "")[-5:] for b in buckets]  # "HH:00"
+    peak = max(pv + load) or 1
+    W, H, L, R, T, B = 920, 220, 40, 10, 12, 26
+    pw, ph, n = W - L - R, H - T - B, len(buckets)
+    gw = pw / n
+    bw = max(2.0, min(11.0, gw / 2 - 1.5))
+    p = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Today: hourly solar vs load">']
+    for frac in (0.0, 0.5, 1.0):  # gridlines + y labels
+        y = T + ph * (1 - frac)
+        p.append(f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#262C37"/>')
+        p.append(f'<text x="{L - 6}" y="{y + 3:.1f}" text-anchor="end" font-size="10" fill="#626C7B">{peak * frac:.1f}</text>')
+    for i in range(n):
+        x0 = L + i * gw + (gw - 2 * bw) / 2
+        for val, color, off in ((pv[i], "#FBBF24", 0.0), (load[i], "#9C8CFB", bw)):
+            bh = ph * (val / peak)
+            p.append(f'<rect x="{x0 + off:.1f}" y="{T + ph - bh:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="1.5" fill="{color}"/>')
+    step = max(1, n // 8)  # sparse x labels so they don't collide
+    for i in range(0, n, step):
+        p.append(f'<text x="{L + i * gw + gw / 2:.1f}" y="{H - 8}" text-anchor="middle" font-size="10" fill="#626C7B">{labels[i]}</text>')
+    p.append("</svg>")
+    return "".join(p)
+
+
+def _tile(k, big, unit, sub, color, fill_pct):
+    return (f'<div class="panel tile"><div class="k">{html.escape(k)}</div>'
+            f'<div class="big" style="color:{color}">{big}<small>{unit}</small></div>'
+            f'<div class="bar"><i style="width:{max(0.0, min(100.0, fill_pct)):.0f}%;background:{color}"></i></div>'
+            f'<div class="sub">{sub}</div></div>')
+
+
+def _pack_card(p):
+    soc = p.get("soc")
+    return (f'<div class="pack"><div class="nm">{html.escape(str(p.get("name", "pack")))}</div>'
+            f'<div class="pc">{fmt(soc)}<small>%</small></div>'
+            f'<div class="bar"><i style="width:{max(0.0, min(100.0, soc or 0)):.0f}%;background:var(--charge)"></i></div>'
+            f'<div class="sub">{fmt(p.get("voltage"), 2)} V · {fmt(p.get("temp_max"), 1)}° · Δ{fmt(p.get("cell_delta"), 3)} V</div></div>')
+
+
+def _snapshot_doc(cur, today, hourly, life, batt):
+    """Assemble the full self-contained HTML document from the captured API payloads."""
+    ts = cur.get("ts") or int(time.time())
+    age = int(time.time()) - ts
+    dot, lab = ("live", "live") if age <= 120 else ("stale", "stale") if age <= 600 else ("down", "old")
+    when = time.strftime("%a %d %b %Y · %I:%M %p %Z", time.localtime(ts))
+    gen = time.strftime("%a %d %b %Y · %I:%M %p %Z", time.localtime())
+
+    today_html = (
+        '<section class="panel"><h2 class="panel-title">Today</h2><div class="today">'
+        f'<div class="lt in"><label>Input · Solar</label><div class="v">{fmt(today.get("pv_kwh"), 1)}<small>kWh</small></div></div>'
+        f'<div class="lt out"><label>Output · Load</label><div class="v">{fmt(today.get("load_kwh"), 1)}<small>kWh</small></div></div>'
+        f'<div class="lt"><label>Battery charged</label><div class="v">{fmt(today.get("charge_kwh"), 1)}<small>kWh</small></div></div>'
+        f'<div class="lt"><label>Battery discharged</label><div class="v">{fmt(today.get("discharge_kwh"), 1)}<small>kWh</small></div></div>'
+        '</div></section>'
+    )
+
+    pv, load = cur.get("pv_power"), cur.get("load_total")
+    soc, bw = cur.get("battery_soc"), cur.get("battery_power")
+    charging = (cur.get("battery_current") or 0) >= 0
+    tone = "var(--charge)" if charging else "var(--discharge)"
+    sign = "+" if (bw or 0) > 0 else ""
+    eta_min, kind = cur.get("battery_eta_minutes"), cur.get("battery_eta_kind")
+    eta = "holding / idle" if eta_min is None else (f"▲ {hm(eta_min)} to full" if kind == "full" else f"▼ {hm(eta_min)} to empty")
+
+    batt_tile = (
+        '<div class="panel tile"><div class="k">Battery</div>'
+        f'<div class="big" style="color:{tone}">{fmt(soc)}<small>%</small></div>'
+        f'<div class="bar"><i style="width:{max(0.0, min(100.0, soc or 0)):.0f}%;background:{tone}"></i></div>'
+        f'<div class="sub" style="color:{tone}">{sign}{fmt(bw)} W {"charging" if charging else "discharging"}</div>'
+        f'<div class="sub">{fmt(cur.get("battery_voltage"), 1)} V · {html.escape(eta)}</div></div>'
+    )
+    temps_tile = (
+        '<div class="panel tile"><div class="k">Temperatures</div>'
+        f'<div class="big">{fmt(cur.get("battery_temp"), 1)}<small>°C batt</small></div>'
+        f'<div class="sub">DC {fmt(cur.get("dc_temp"), 1)}° · AC {fmt(cur.get("ac_temp"), 1)}°</div></div>'
+    )
+    hero_html = (
+        '<section class="hero">'
+        + _tile("Solar PV", fmt(pv), "W", f'PV1 {fmt(cur.get("pv1_power"))} · PV2 {fmt(cur.get("pv2_power"))} W', "var(--pv)", (pv or 0) / 4000 * 100)
+        + _tile("Load", fmt(load), "W", f'L1 {fmt(cur.get("load_power"))} · L2 {fmt(cur.get("load_l2_power"))} W', "var(--load)", (load or 0) / 4000 * 100)
+        + batt_tile + temps_tile + '</section>'
+    )
+
+    chart_html = (
+        '<section class="panel section"><h2 class="panel-title">Today · hourly energy</h2>'
+        '<div class="legend"><span><i style="background:#FBBF24"></i>Solar (kWh)</span>'
+        '<span><i style="background:#9C8CFB"></i>Load (kWh)</span></div>'
+        f'{_svg_hourly(hourly)}</section>'
+    )
+
+    packs = (batt or {}).get("packs") or []
+    if packs:
+        bank = (batt or {}).get("bank") or {}
+        batt_html = (
+            f'<section class="panel section"><h2 class="panel-title">Battery bank · '
+            f'{fmt(bank.get("soc"))}% · {fmt(bank.get("voltage"), 1)} V</h2>'
+            f'<div class="packs">{"".join(_pack_card(p) for p in packs)}</div></section>'
+        )
+    else:
+        batt_html = ""
+
+    faults = cur.get("faults") or []
+    if faults:
+        txt = ", ".join(f'F{int(f.get("code", 0)):02d} {html.escape(str(f.get("text", "")))}' for f in faults)
+        status_html = f'<section class="panel section"><h2 class="panel-title">Status</h2><div class="fault">⚠ {txt}</div></section>'
+    else:
+        status_html = '<section class="panel section"><h2 class="panel-title">Status</h2><div class="ok">● OK — no active faults</div></section>'
+
+    foot = (f'<div class="foot">Lifetime {fmt(life.get("pv_kwh"), 1)} kWh in · {fmt(life.get("load_kwh"), 1)} kWh out'
+            f' — static snapshot generated {html.escape(gen)}. Not live.</div>')
+
+    return (
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>'
+        f'<title>Solar snapshot · {html.escape(when)}</title><style>{_SNAPSHOT_CSS}</style></head><body>'
+        f'<header class="topbar"><div class="brand"><span class="dot {dot}"></span><h1>Solar Tracking</h1>'
+        f'<span class="badge">snapshot</span></div>'
+        f'<div class="status">{html.escape(lab)} · {html.escape(when)}</div></header>'
+        f'<main>{today_html}{hero_html}{chart_html}{batt_html}{status_html}{foot}</main></body></html>'
+    )
+
+
+def render_snapshot():
+    """`solar snapshot` — capture the live API payloads and write a static HTML dashboard."""
+    try:
+        cur = get("/api/current")
+    except Exception:
+        return RED("offline ●") + DIM(f"  dashboard unreachable ({BASE})")
+    if not cur.get("available"):
+        return YEL("waiting ●") + DIM("  no data yet — nothing to snapshot")
+    try:
+        days = day_buckets()
+    except Exception:
+        days = {}
+    now = time.localtime()
+    today = days.get(time.strftime("%Y-%m-%d", now), {})
+    today_mid = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+    try:
+        hourly = get(f"/api/energy?period=hour&start={today_mid}").get("buckets", [])
+    except Exception:
+        hourly = []
+    try:
+        life = get("/api/energy/lifetime")
+    except Exception:
+        life = {}
+    try:
+        batt = get("/api/battery")
+    except Exception:
+        batt = {}
+
+    doc = _snapshot_doc(cur, today, hourly, life, batt)
+    try:
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        path = os.path.join(EXPORT_DIR, f"solar-snapshot-{time.strftime('%Y-%m-%d_%H%M', now)}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doc)
+    except OSError as e:
+        return RED("✗ snapshot failed  ") + DIM(str(e))
+    return (GREEN("✔ snapshot  ") + "dashboard captured\n"
+            + f"  {BOLD(path)}\n"
+            + DIM("  pull it via Pi Connect file transfer, then open it in any browser."))
+
+
 def render(show_in=False, watch=False):
     try:
         cur = get("/api/current")
@@ -233,6 +455,9 @@ def main():
         return
     if any(a in ("export-hourly", "-export-hourly", "--export-hourly") for a in args):
         print(export_hourly())  # don't clear() — keep the path on screen to copy
+        return
+    if any(a in ("snapshot", "-snapshot", "--snapshot") for a in args):
+        print(render_snapshot())  # don't clear() — keep the path on screen to copy
         return
     watch = any(a in ("watch", "-w", "--watch") for a in args)
     show_in = any(a in ("in", "-i", "--in") for a in args)
