@@ -5,11 +5,14 @@ Connect remote shell). Reads the local JSON API; stdlib-only, no dependencies.
     solar           one-shot status (AC input hidden)
     solar in        also show the AC input line
     solar usage     today's + yesterday's PV / Load / Battery energy totals (the dashboard's Today strip)
+    solar export-hourly   write today's hourly energy to a CSV on the Pi (to pull remotely)
     solar watch     refresh every few seconds, with lifetime totals (Ctrl+C to quit)
     solar watch in  watch + AC input
 
 Override the target with SOLAR_DASH_URL (default http://127.0.0.1:8000).
+Override the CSV export folder with SOLAR_EXPORT_DIR (default ~/solardash/exports).
 """
+import csv
 import json
 import os
 import sys
@@ -17,6 +20,7 @@ import time
 import urllib.request
 
 BASE = os.environ.get("SOLAR_DASH_URL", "http://127.0.0.1:8000").rstrip("/")
+EXPORT_DIR = os.path.expanduser(os.environ.get("SOLAR_EXPORT_DIR", "~/solardash/exports"))
 USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
@@ -113,6 +117,33 @@ def render_usage():
     return "\n".join(L)
 
 
+def export_hourly():
+    """`solar export-hourly` — write today's per-hour energy buckets to a CSV on the Pi
+    (columns mirror the dashboard's CSV). Returns a status line: the path written, or an error."""
+    now = time.localtime()
+    today_mid = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+    try:
+        ej = get(f"/api/energy?period=hour&start={today_mid}")  # hourly buckets from today's midnight on
+    except Exception:
+        return RED("offline ●") + DIM(f"  dashboard unreachable ({BASE})")
+    buckets = ej.get("buckets", [])
+    try:
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        path = os.path.join(EXPORT_DIR, f"solar-hourly-{time.strftime('%Y-%m-%d', now)}.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(("hour", "solar_kwh", "load_kwh", "battery_charged_kwh", "battery_discharged_kwh"))
+            for b in buckets:
+                w.writerow([b.get("bucket"), b.get("pv_kwh"), b.get("load_kwh"),
+                            b.get("charge_kwh"), b.get("discharge_kwh")])
+    except OSError as e:
+        return RED("✗ export failed  ") + DIM(str(e))
+    return (GREEN("✔ exported  ") + f"{len(buckets)} hourly rows\n"
+            + f"  {BOLD(path)}\n"
+            + DIM("  pull it via Pi Connect file transfer, or copy from this shell with:\n")
+            + DIM(f"    cat {path}"))
+
+
 def render(show_in=False, watch=False):
     try:
         cur = get("/api/current")
@@ -199,6 +230,9 @@ def main():
     if any(a in ("usage", "-usage", "--usage", "-u") for a in args):
         clear()
         print(render_usage())
+        return
+    if any(a in ("export-hourly", "-export-hourly", "--export-hourly") for a in args):
+        print(export_hourly())  # don't clear() — keep the path on screen to copy
         return
     watch = any(a in ("watch", "-w", "--watch") for a in args)
     show_in = any(a in ("in", "-i", "--in") for a in args)

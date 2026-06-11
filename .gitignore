@@ -13,6 +13,9 @@ venv/
 data/
 *.log
 
+# CSV exports written by `solar export-hourly`
+exports/
+
 # Local screenshot/scratch drop folder (committed copies live in docs/img/)
 .files/
 
