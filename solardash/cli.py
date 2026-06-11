@@ -236,13 +236,30 @@ def _gauge(gid, value, mx, c1, c2, unit, sub):
     )
 
 
-def _leg(label, color, watts, sub):
-    """Per-string / per-leg metric block shown under a gauge (PV1/PV2, L1/L2)."""
+def _leg(label, color, watts, amps, sub):
+    """Per-string / per-leg metric block shown under a gauge (PV1/PV2, L1/L2).
+
+    Carries both the W and A value so the W/A toggle can switch it client-side; renders W first."""
     w = max(0.0, min(100.0, (watts or 0) / 4000 * 100))
-    return (f'<div class="leg"><span class="leg-top"><i class="swatch" style="background:{color}"></i>{label}</span>'
-            f'<span class="leg-val"><span>{fmt(watts)}</span> W</span>'
+    return (f'<div class="leg" data-w="{watts or 0}" data-a="{amps or 0}">'
+            f'<span class="leg-top"><i class="swatch" style="background:{color}"></i>{label}</span>'
+            f'<span class="leg-val"><span class="leg-num">{fmt(watts)}</span> <span class="leg-u">W</span></span>'
             f'<div class="leg-bar"><div style="background:{color};width:{w:.0f}%"></div></div>'
             f'<span class="leg-sub">{html.escape(sub)}</span></div>')
+
+
+def _gauge_panel(gid, title, w_val, w_max, w_unit, w_sub, a_val, a_max, a_unit, a_sub, c1, c2, legs):
+    """A gauge panel with a W/A unit toggle. Both unit datasets ride on the panel so the inline
+    script can re-scale the dial + legs on click; the server renders the W state initially."""
+    data = (f'data-gpanel="{gid}" '
+            f'data-w-val="{w_val or 0}" data-w-max="{w_max}" data-w-unit="{w_unit}" data-w-sub="{html.escape(w_sub)}" data-w-dec="0" '
+            f'data-a-val="{a_val or 0}" data-a-max="{a_max}" data-a-unit="{a_unit}" data-a-sub="{html.escape(a_sub)}" data-a-dec="1"')
+    toggle = (f'<div class="head-tools"><div class="unit-toggle" data-gauge="{gid}">'
+              f'<button data-u="W" class="active">W</button><button data-u="A">A</button></div></div>')
+    legs_html = '<div class="legs">' + '<div class="leg-div"></div>'.join(legs) + '</div>'
+    return (f'<div class="panel" {data}>'
+            f'<div class="panel-head"><span class="panel-title">{html.escape(title)}</span>{toggle}</div>'
+            + _gauge(gid, w_val, w_max, c1, c2, w_unit, w_sub) + legs_html + '</div>')
 
 
 _ICON_SUN = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
@@ -325,10 +342,12 @@ def _energy_bars(hourly):
     return f'<div class="ebars">{axis}<div class="ebars-track">{bars}</div></div>'
 
 
-# Tiny inline script (offline, no network) for the energy-bar click popup — a compact port of
-# web/components.js showEbarPopup(); reuses the dashboard's .ebar-popup / .pop-row styles.
-_EBAR_SCRIPT = """<script>
+# Tiny inline script (offline, no network) driving the snapshot's three interactions: the
+# energy-bar click popup (port of web/components.js showEbarPopup), the PV/Load W<->A unit
+# toggle (port of the dashboard's Gauge.setUnit), and a client-side "Export CSV" of the bars.
+_SNAP_SCRIPT = """<script>
 (function(){
+ /* energy-bar click popup */
  var pop;
  function ensure(){if(!pop){pop=document.createElement('div');pop.className='ebar-popup';pop.style.display='none';document.body.appendChild(pop);}return pop;}
  function kwh(v){v=v||0;return v<1?Math.round(v*1000)+' Wh':v.toFixed(2)+' kWh';}
@@ -345,9 +364,51 @@ _EBAR_SCRIPT = """<script>
   var top=r.top-pr.height-8;if(top<8)top=r.bottom+8;
   p.style.left=Math.round(left)+'px';p.style.top=Math.round(top)+'px';
  }
- function hide(){if(pop)pop.style.display='none';}
- document.addEventListener('click',function(e){var g=e.target.closest('.ebar-group');if(g){show(g);}else{hide();}});
- window.addEventListener('resize',hide);
+ function hidePop(){if(pop)pop.style.display='none';}
+ document.addEventListener('click',function(e){var g=e.target.closest('.ebar-group');if(g){show(g);}else if(!e.target.closest('.unit-toggle')&&!e.target.closest('#snapExport')){hidePop();}});
+ window.addEventListener('resize',hidePop);
+
+ /* PV / Load W<->A unit toggle: re-scale the dial + legs from the panel's data-{w,a}-* */
+ function num(v,dec){return dec?(+v).toFixed(dec):Math.round(+v).toLocaleString();}
+ function setUnit(panel,u){
+  var max=+panel.getAttribute('data-'+u+'-max')||1,val=+panel.getAttribute('data-'+u+'-val')||0;
+  var dec=+panel.getAttribute('data-'+u+'-dec')||0,unit=panel.getAttribute('data-'+u+'-unit')||'',sub=panel.getAttribute('data-'+u+'-sub')||'';
+  var pct=Math.max(0,Math.min(1,val/(max||1)));
+  panel.querySelector('.g-fill').style.strokeDashoffset=String(1000*(1-pct));
+  panel.querySelector('.g-tiprot').setAttribute('transform','rotate('+(135+270*pct).toFixed(2)+' 100 100)');
+  panel.querySelector('.g-num').textContent=num(val,dec);
+  panel.querySelector('.g-val small').textContent=unit;
+  panel.querySelector('.g-sub').textContent=sub;
+  panel.querySelectorAll('.leg').forEach(function(leg){
+   var lv=+leg.getAttribute('data-'+u)||0;
+   leg.querySelector('.leg-num').textContent=num(lv,dec);
+   leg.querySelector('.leg-u').textContent=unit;
+   var bar=leg.querySelector('.leg-bar>div');
+   if(bar)bar.style.width=Math.max(0,Math.min(100,lv/(max||1)*100)).toFixed(0)+'%';
+  });
+ }
+ document.querySelectorAll('.unit-toggle button').forEach(function(btn){
+  btn.addEventListener('click',function(){
+   var tog=btn.closest('.unit-toggle'),panel=btn.closest('[data-gpanel]');
+   tog.querySelectorAll('button').forEach(function(b){b.classList.toggle('active',b===btn);});
+   setUnit(panel,btn.getAttribute('data-u').toLowerCase());
+  });
+ });
+
+ /* Export CSV — built client-side from the embedded hourly bars (matches `solar export-hourly`) */
+ var ex=document.getElementById('snapExport');
+ if(ex)ex.addEventListener('click',function(){
+  var rows=[['hour','solar_kwh','load_kwh','battery_charged_kwh','battery_discharged_kwh']];
+  document.querySelectorAll('.ebar-group').forEach(function(g){
+   rows.push([g.dataset.title,g.dataset.pv,g.dataset.load,g.dataset.charge,g.dataset.discharge]);
+  });
+  var csv=rows.map(function(r){return r.join(',');}).join('\\n');
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='solar-hourly-'+(document.body.getAttribute('data-date')||'today')+'.csv';
+  document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},0);
+ });
 })();
 </script>"""
 
@@ -389,24 +450,28 @@ def _snapshot_doc(cur, today, hourly, life, batt):
         '</div></section>'
     )
 
-    # Gauges + legs (PV / Load) — the dials
-    pv_panel = (
-        '<div class="panel"><div class="panel-head"><span class="panel-title">Solar PV</span></div>'
-        + _gauge("pv", cur.get("pv_power"), 4000, "#22D3EE", "#4F9CF9", "W", "total input")
-        + '<div class="legs">'
-        + _leg("PV1", "#22D3EE", cur.get("pv1_power"), f'{fmt(cur.get("pv1_voltage"), 1)} V · {fmt(cur.get("pv1_current"), 1)} A')
-        + '<div class="leg-div"></div>'
-        + _leg("PV2", "#4F9CF9", cur.get("pv2_power"), f'{fmt(cur.get("pv2_voltage"), 1)} V · {fmt(cur.get("pv2_current"), 1)} A')
-        + '</div></div>'
+    # Gauges + legs (PV / Load) — the dials, with a W/A unit toggle
+    pv_amps = (cur.get("pv1_current") or 0) + (cur.get("pv2_current") or 0)
+    pv_panel = _gauge_panel(
+        "pv", "Solar PV",
+        cur.get("pv_power"), 4000, "W", "total input",
+        pv_amps, 20, "A", "total current",
+        "#22D3EE", "#4F9CF9",
+        [_leg("PV1", "#22D3EE", cur.get("pv1_power"), cur.get("pv1_current"),
+              f'{fmt(cur.get("pv1_voltage"), 1)} V · {fmt(cur.get("pv1_current"), 1)} A'),
+         _leg("PV2", "#4F9CF9", cur.get("pv2_power"), cur.get("pv2_current"),
+              f'{fmt(cur.get("pv2_voltage"), 1)} V · {fmt(cur.get("pv2_current"), 1)} A')],
     )
-    load_panel = (
-        '<div class="panel"><div class="panel-head"><span class="panel-title">AC Output · Load</span></div>'
-        + _gauge("load", cur.get("load_total"), 4000, "#9C8CFB", "#9C8CFB", "W", "real power · L1+L2")
-        + '<div class="legs">'
-        + _leg("L1", "#9C8CFB", cur.get("load_power"), f'{fmt(cur.get("load_voltage"), 1)} V · {fmt(cur.get("load_current"), 1)} A')
-        + '<div class="leg-div"></div>'
-        + _leg("L2", "#9C8CFB", cur.get("load_l2_power"), f'{fmt(cur.get("load_l2_voltage"), 1)} V · {fmt(cur.get("load_l2_current"), 1)} A')
-        + '</div></div>'
+    load_amps = (cur.get("load_current") or 0) + (cur.get("load_l2_current") or 0)
+    load_panel = _gauge_panel(
+        "load", "AC Output · Load",
+        cur.get("load_total"), 4000, "W", "real power · L1+L2",
+        load_amps, 40, "A", "current · L1+L2",
+        "#9C8CFB", "#9C8CFB",
+        [_leg("L1", "#9C8CFB", cur.get("load_power"), cur.get("load_current"),
+              f'{fmt(cur.get("load_voltage"), 1)} V · {fmt(cur.get("load_current"), 1)} A'),
+         _leg("L2", "#9C8CFB", cur.get("load_l2_power"), cur.get("load_l2_current"),
+              f'{fmt(cur.get("load_l2_voltage"), 1)} V · {fmt(cur.get("load_l2_current"), 1)} A')],
     )
 
     # Battery bank panel
@@ -462,9 +527,10 @@ def _snapshot_doc(cur, today, hourly, life, batt):
         f'{fault_tile}</section>'
     )
 
-    # Energy trends (today, hourly)
+    # Energy trends (today, hourly) — with a client-side CSV export
     energy_html = (
-        '<section class="card energy-card"><div class="chart-head"><h2>Energy trends · today (hourly)</h2></div>'
+        '<section class="card energy-card"><div class="chart-head"><h2>Energy trends · today (hourly)</h2>'
+        '<button class="export-btn" id="snapExport" title="Download the hourly data as CSV">Export CSV</button></div>'
         f'<div class="etotals"><span class="et in">Solar <b>{fmt(today.get("pv_kwh"), 1)}</b> kWh</span>'
         f'<span class="et out">Load <b>{fmt(today.get("load_kwh"), 1)}</b> kWh</span></div>'
         f'{_energy_bars(hourly)}'
@@ -490,12 +556,13 @@ def _snapshot_doc(cur, today, hourly, life, batt):
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>'
         '<meta name="viewport" content="width=device-width, initial-scale=1"/>'
         f'<title>Solar snapshot · {html.escape(when)}</title>'
-        f'<style>{_dashboard_css()}{_SNAP_TWEAKS}</style></head><body class="hide-acin">'
+        f'<style>{_dashboard_css()}{_SNAP_TWEAKS}</style></head>'
+        f'<body class="hide-acin" data-date="{time.strftime("%Y-%m-%d", time.localtime(ts))}">'
         '<header class="topbar"><div class="brand">'
         f'<span class="dot {dot}"></span><h1>Solar Tracking</h1><span class="badge">snapshot</span></div>'
         f'<div class="top-right"><div class="status">{html.escape(lab)} · {html.escape(when)}</div></div></header>'
         f'<main>{today_html}{hero_html}{detail_html}{tiles_html}{energy_html}{foot}</main>'
-        f'{_EBAR_SCRIPT}</body></html>'
+        f'{_SNAP_SCRIPT}</body></html>'
     )
 
 
