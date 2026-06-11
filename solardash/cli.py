@@ -291,11 +291,20 @@ def _nice_step(mx, target=4):
 
 
 def _energy_bars(hourly):
-    """Today's hourly Solar vs Load as the dashboard's grouped energy bars (pure HTML/CSS)."""
-    if not hourly:
-        return '<div class="ebars-empty">No energy logged yet today — give it a bit.</div>'
-    slots = [{"label": (b.get("bucket") or "")[-5:-3], "pv": b.get("pv_kwh") or 0, "load": b.get("load_kwh") or 0}
-             for b in hourly]
+    """Today's hourly Solar vs Load as the dashboard's grouped energy bars — all 24 hours, with
+    future / empty hours shown as a flat baseline. Each bar carries data-* for the click popup."""
+    by_hour = {}
+    for b in hourly or []:
+        try:
+            by_hour[int((b.get("bucket") or "")[-5:-3])] = b  # "YYYY-MM-DD HH:00" -> HH
+        except ValueError:
+            pass
+    slots = []
+    for hr in range(24):
+        b = by_hour.get(hr) or {}
+        slots.append({"label": f"{hr:02d}", "title": f"{hr:02d}:00", "pv": b.get("pv_kwh") or 0,
+                      "load": b.get("load_kwh") or 0, "charge": b.get("charge_kwh") or 0,
+                      "discharge": b.get("discharge_kwh") or 0})
     max_v = max((max(s["pv"], s["load"]) for s in slots), default=0)
     step = _nice_step(max_v)
     axis_max = max(step, math.ceil(max_v / step) * step) if max_v else step
@@ -306,13 +315,41 @@ def _energy_bars(hourly):
         t -= step
     axis = '<div class="eaxis">' + "".join(f"<span>{fmt_t(tk)}</span>" for tk in ticks) + "</div>"
     bars = "".join(
-        f'<div class="ebar-group"><div class="ebar-plot">'
+        f'<div class="ebar-group" data-title="{s["title"]}" data-pv="{s["pv"]}" data-load="{s["load"]}" '
+        f'data-charge="{s["charge"]}" data-discharge="{s["discharge"]}"><div class="ebar-plot">'
         f'<div class="ebar ebar-in" style="height:{s["pv"] / axis_max * 100:.1f}%"></div>'
         f'<div class="ebar ebar-out" style="height:{s["load"] / axis_max * 100:.1f}%"></div></div>'
-        f'<div class="ebar-x">{html.escape(s["label"])}</div></div>'
+        f'<div class="ebar-x">{s["label"]}</div></div>'
         for s in slots
     )
     return f'<div class="ebars">{axis}<div class="ebars-track">{bars}</div></div>'
+
+
+# Tiny inline script (offline, no network) for the energy-bar click popup — a compact port of
+# web/components.js showEbarPopup(); reuses the dashboard's .ebar-popup / .pop-row styles.
+_EBAR_SCRIPT = """<script>
+(function(){
+ var pop;
+ function ensure(){if(!pop){pop=document.createElement('div');pop.className='ebar-popup';pop.style.display='none';document.body.appendChild(pop);}return pop;}
+ function kwh(v){v=v||0;return v<1?Math.round(v*1000)+' Wh':v.toFixed(2)+' kWh';}
+ function show(g){
+  var p=ensure();
+  var pv=+g.dataset.pv||0,load=+g.dataset.load||0,ch=+g.dataset.charge||0,di=+g.dataset.discharge||0;
+  var h='<div class="pop-title">'+(g.dataset.title||'')+'</div>'+
+   '<div class="pop-row"><i style="background:#FBBF24"></i>Solar PV<b>'+kwh(pv)+'</b></div>'+
+   '<div class="pop-row"><i style="background:#9C8CFB"></i>AC Output<b>'+kwh(load)+'</b></div>';
+  if(ch||di){var net=ch>=di?'+'+kwh(ch):'\\u2212'+kwh(di);h+='<div class="pop-row"><i style="background:#34D399"></i>Battery<b>'+net+'</b></div>';}
+  p.innerHTML=h;p.style.display='block';
+  var r=g.getBoundingClientRect(),pr=p.getBoundingClientRect();
+  var left=r.left+r.width/2-pr.width/2;left=Math.max(8,Math.min(window.innerWidth-pr.width-8,left));
+  var top=r.top-pr.height-8;if(top<8)top=r.bottom+8;
+  p.style.left=Math.round(left)+'px';p.style.top=Math.round(top)+'px';
+ }
+ function hide(){if(pop)pop.style.display='none';}
+ document.addEventListener('click',function(e){var g=e.target.closest('.ebar-group');if(g){show(g);}else{hide();}});
+ window.addEventListener('resize',hide);
+})();
+</script>"""
 
 
 def _pack_card(p):
@@ -457,7 +494,8 @@ def _snapshot_doc(cur, today, hourly, life, batt):
         '<header class="topbar"><div class="brand">'
         f'<span class="dot {dot}"></span><h1>Solar Tracking</h1><span class="badge">snapshot</span></div>'
         f'<div class="top-right"><div class="status">{html.escape(lab)} · {html.escape(when)}</div></div></header>'
-        f'<main>{today_html}{hero_html}{tiles_html}{energy_html}{detail_html}{foot}</main></body></html>'
+        f'<main>{today_html}{hero_html}{detail_html}{tiles_html}{energy_html}{foot}</main>'
+        f'{_EBAR_SCRIPT}</body></html>'
     )
 
 
