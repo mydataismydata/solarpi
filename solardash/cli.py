@@ -4,6 +4,7 @@ Connect remote shell). Reads the local JSON API; stdlib-only, no dependencies.
 
     solar           one-shot status (AC input hidden)
     solar in        also show the AC input line
+    solar usage     today's PV / Load / Battery energy totals (the dashboard's Today strip)
     solar watch     refresh every few seconds, with lifetime totals (Ctrl+C to quit)
     solar watch in  watch + AC input
 
@@ -68,6 +69,36 @@ VAL_W = 8  # fixed width for the value+unit column so every bar starts at the sa
 def statline(label, value, bar_str, trailing=""):
     """label | right-aligned value | bar | trailing — bars align across all rows."""
     return f"  {LBL(label)}{value.rjust(VAL_W)}  {bar_str}  {trailing}".rstrip()
+
+
+def today_bucket():
+    """Today's day-bucket from the daily energy roll-up — matched by local date, exactly as
+    the dashboard's Today strip does (GET /api/energy?period=day, find bucket == YYYY-MM-DD)."""
+    now = time.localtime()
+    key = time.strftime("%Y-%m-%d", now)
+    start = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+    ej = get(f"/api/energy?period=day&start={start}")
+    for b in ej.get("buckets", []):
+        if b.get("bucket") == key:
+            return b
+    return {}
+
+
+def render_usage():
+    """`solar usage` — today's PV in / Load out / Battery charged / discharged (kWh)."""
+    try:
+        b = today_bucket()
+    except Exception:
+        return RED("offline ●") + DIM(f"  dashboard unreachable ({BASE})")
+    pv, load = b.get("pv_kwh"), b.get("load_kwh")
+    chg, dis = b.get("charge_kwh"), b.get("discharge_kwh")
+    peak = max(pv or 0, load or 0, chg or 0, dis or 0) or 1  # scale bars to the largest, so they compare
+    L = [f"{BOLD('TODAY')}    {DIM(time.strftime('%a %d %b'))}"]
+    L.append(statline("Solar", f"{fmt(pv, 1)} kWh", YEL(bar((pv or 0) / peak)), DIM("solar generated")))
+    L.append(statline("Load", f"{fmt(load, 1)} kWh", MAG(bar((load or 0) / peak)), DIM("consumed")))
+    L.append(statline("Batt +", f"{fmt(chg, 1)} kWh", GREEN(bar((chg or 0) / peak)), DIM("charged")))
+    L.append(statline("Batt -", f"{fmt(dis, 1)} kWh", YEL(bar((dis or 0) / peak)), DIM("discharged")))
+    return "\n".join(L)
 
 
 def render(show_in=False, watch=False):
@@ -153,6 +184,10 @@ def render(show_in=False, watch=False):
 
 def main():
     args = sys.argv[1:]
+    if any(a in ("usage", "-usage", "--usage", "-u") for a in args):
+        clear()
+        print(render_usage())
+        return
     watch = any(a in ("watch", "-w", "--watch") for a in args)
     show_in = any(a in ("in", "-i", "--in") for a in args)
     if not watch:
