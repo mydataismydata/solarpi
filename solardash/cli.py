@@ -16,6 +16,7 @@ Override the export folder (CSV + HTML) with SOLAR_EXPORT_DIR (default ~/solarda
 import csv
 import html
 import json
+import math
 import os
 import sys
 import time
@@ -148,180 +149,315 @@ def export_hourly():
 
 # --- `solar snapshot`: a self-contained static HTML view of the dashboard ----------------
 # Server-rendered here so the file always displays offline (no live fetches, no JS, no CDN).
-# Palette mirrors solardash/web/style.css so it reads like the real dashboard.
-_SNAPSHOT_CSS = """
-:root{--bg:#0E1116;--surface:#161A21;--surface2:#1C212B;--line:#262C37;--txt:#EAF0F6;
---txt2:#9BA7B6;--txt3:#626C7B;--charge:#34D399;--discharge:#FBBF24;--load:#9C8CFB;--pv:#FBBF24;
---fault:#F87171;--accent:#22D3EE;--track:rgba(255,255,255,.07);
---mono:ui-monospace,"Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
---sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.45 var(--sans);
--webkit-font-smoothing:antialiased;padding-bottom:32px}
-.topbar{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;
-gap:12px;flex-wrap:wrap;padding:14px 18px;background:var(--bg);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:10px}
-.brand h1{font-size:17px;font-weight:650;margin:0}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--txt3)}
-.dot.live{background:var(--charge)}.dot.stale{background:var(--discharge)}.dot.down{background:var(--fault)}
-.badge{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--txt3);
-border:1px solid var(--line);border-radius:999px;padding:2px 8px}
-.status{color:var(--txt2);font-size:13px;font-variant-numeric:tabular-nums}
-main{max-width:1100px;margin:0 auto;padding:16px}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px}
-.panel-title{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--txt2);
-font-weight:600;margin:0 0 12px}
-.today{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.hero{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px}
-@media(min-width:760px){.today{grid-template-columns:repeat(4,1fr)}.hero{grid-template-columns:repeat(4,1fr)}}
-.lt{background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:12px}
-.lt label{display:block;font-size:11px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px}
-.lt .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:4px}
-.lt .v small,.big small,.pc small{font-size:12px;color:var(--txt2);font-weight:500;margin-left:3px}
-.lt.in .v{color:var(--pv)}.lt.out .v{color:var(--load)}
-.tile .k{font-size:12px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px}
-.big{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;margin:6px 0 2px}
-.sub{font-size:12.5px;color:var(--txt2)}
-.bar{height:8px;border-radius:5px;background:var(--track);overflow:hidden;margin:10px 0 6px}
-.bar>i{display:block;height:100%;border-radius:5px}
-.section{margin-top:14px}
-.legend{display:flex;gap:18px;font-size:12px;color:var(--txt2);margin-bottom:10px}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
-.packs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-.pack{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px}
-.pack .nm{font-size:12px;color:var(--txt2)}
-.pack .pc{font-size:20px;font-weight:650;margin-top:2px}
-.fault{color:var(--fault);font-weight:600}.ok{color:var(--charge);font-weight:600}
-.foot{color:var(--txt3);font-size:12px;margin-top:20px;text-align:center}
-.empty{color:var(--txt3);font-size:13px;padding:8px 0}
-svg{display:block;width:100%;height:auto}svg text{font-family:var(--mono)}
-"""
+# It inlines the dashboard's own web/style.css and emits the same gauge / flow / panel markup,
+# so the snapshot looks like the real page: radial power dials, power-flow, battery bank, etc.
+_WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+
+# Snapshot-only tweaks layered on top of the dashboard's stylesheet.
+_SNAP_TWEAKS = (
+    ".badge{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--txt3);"
+    "border:1px solid var(--line);border-radius:999px;padding:2px 9px}"
+    ".snap-note{color:var(--txt3);font-size:12px}"
+)
+
+# Minimal fallback, only used if web/style.css can't be read (unusual install layout).
+_FALLBACK_CSS = (
+    ":root{--bg:#0E1116;--surface:#161A21;--surface2:#1C212B;--line:#262C37;--txt:#EAF0F6;"
+    "--txt2:#9BA7B6;--txt3:#626C7B;--charge:#34D399;--discharge:#FBBF24;--load:#9C8CFB;"
+    "--pv:#FBBF24;--fault:#F87171;--accent:#22D3EE;--track:rgba(255,255,255,.07);"
+    "--sans:system-ui,sans-serif;--mono:ui-monospace,Consolas,monospace}"
+    "body{background:var(--bg);color:var(--txt);font-family:var(--sans);margin:0;padding:16px}"
+    ".panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0}"
+)
 
 
-def _svg_hourly(buckets):
-    """Inline SVG: today's hourly Solar vs Load (grouped bars, kWh). No JS, no external deps."""
-    if not buckets:
-        return '<div class="empty">No hourly data recorded yet today.</div>'
-    pv = [b.get("pv_kwh") or 0 for b in buckets]
-    load = [b.get("load_kwh") or 0 for b in buckets]
-    labels = [(b.get("bucket") or "")[-5:] for b in buckets]  # "HH:00"
-    peak = max(pv + load) or 1
-    W, H, L, R, T, B = 920, 220, 40, 10, 12, 26
-    pw, ph, n = W - L - R, H - T - B, len(buckets)
-    gw = pw / n
-    bw = max(2.0, min(11.0, gw / 2 - 1.5))
-    p = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Today: hourly solar vs load">']
-    for frac in (0.0, 0.5, 1.0):  # gridlines + y labels
-        y = T + ph * (1 - frac)
-        p.append(f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#262C37"/>')
-        p.append(f'<text x="{L - 6}" y="{y + 3:.1f}" text-anchor="end" font-size="10" fill="#626C7B">{peak * frac:.1f}</text>')
-    for i in range(n):
-        x0 = L + i * gw + (gw - 2 * bw) / 2
-        for val, color, off in ((pv[i], "#FBBF24", 0.0), (load[i], "#9C8CFB", bw)):
-            bh = ph * (val / peak)
-            p.append(f'<rect x="{x0 + off:.1f}" y="{T + ph - bh:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="1.5" fill="{color}"/>')
-    step = max(1, n // 8)  # sparse x labels so they don't collide
-    for i in range(0, n, step):
-        p.append(f'<text x="{L + i * gw + gw / 2:.1f}" y="{H - 8}" text-anchor="middle" font-size="10" fill="#626C7B">{labels[i]}</text>')
-    p.append("</svg>")
-    return "".join(p)
+def _dashboard_css():
+    """The live dashboard's stylesheet, read from the package so the snapshot always matches it."""
+    try:
+        with open(os.path.join(_WEB_DIR, "style.css"), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return _FALLBACK_CSS
 
 
-def _tile(k, big, unit, sub, color, fill_pct):
-    return (f'<div class="panel tile"><div class="k">{html.escape(k)}</div>'
-            f'<div class="big" style="color:{color}">{big}<small>{unit}</small></div>'
-            f'<div class="bar"><i style="width:{max(0.0, min(100.0, fill_pct)):.0f}%;background:{color}"></i></div>'
-            f'<div class="sub">{sub}</div></div>')
+# Static SVG radial gauge — a faithful port of web/components.js Gauge (270° arc, 11 ticks,
+# c1->c2 gradient fill to the value, and a circular tip marker).
+_G = {"CX": 100, "CY": 100, "R": 72, "SW": 13, "START": 135, "SWEEP": 270, "TICKS": 11}
+
+
+def _polar(cx, cy, r, deg):
+    a = math.radians(deg)
+    return cx + r * math.cos(a), cy + r * math.sin(a)
+
+
+def _arc(cx, cy, r, a0, a1):
+    x0, y0 = _polar(cx, cy, r, a0)
+    x1, y1 = _polar(cx, cy, r, a1)
+    large = 1 if (a1 - a0) % 360 > 180 else 0
+    return f"M {x0:.2f} {y0:.2f} A {r} {r} 0 {large} 1 {x1:.2f} {y1:.2f}"
+
+
+def _gauge_ticks():
+    g = _G
+    out = []
+    for i in range(g["TICKS"]):
+        ang = g["START"] + g["SWEEP"] * i / (g["TICKS"] - 1)
+        major = i % 5 == 0
+        r_in = g["R"] + g["SW"] / 2 + 4
+        r_out = g["R"] + g["SW"] / 2 + (11 if major else 7)
+        x1, y1 = _polar(g["CX"], g["CY"], r_in, ang)
+        x2, y2 = _polar(g["CX"], g["CY"], r_out, ang)
+        out.append(f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
+                   f'stroke="#626C7B" stroke-opacity="{0.7 if major else 0.4}" '
+                   f'stroke-width="{1.6 if major else 1}" stroke-linecap="round"/>')
+    return "".join(out)
+
+
+def _gauge(gid, value, mx, c1, c2, unit, sub):
+    """One radial dial, in the dashboard's gauge markup so the inlined CSS styles it."""
+    g = _G
+    v = value or 0
+    pct = max(0.0, min(1.0, v / (mx or 1)))
+    track = _arc(g["CX"], g["CY"], g["R"], g["START"], g["START"] + g["SWEEP"])
+    tipx, tipy = _polar(g["CX"], g["CY"], g["R"], 0)
+    ang = g["START"] + g["SWEEP"] * pct
+    return (
+        f'<div class="gauge"><svg viewBox="0 0 200 200" class="g-svg">'
+        f'<defs><linearGradient id="grad_{gid}" x1="0" y1="1" x2="1" y2="0">'
+        f'<stop offset="0" stop-color="{c1}"/><stop offset="1" stop-color="{c2}"/></linearGradient></defs>'
+        f'<g class="g-ticks">{_gauge_ticks()}</g>'
+        f'<path class="g-track" d="{track}"/>'
+        f'<path class="g-fill" d="{track}" pathLength="1000" stroke="url(#grad_{gid})" '
+        f'style="stroke-dashoffset:{1000 * (1 - pct):.0f}"/>'
+        f'<g class="g-tiprot" transform="rotate({ang:.2f} {g["CX"]} {g["CY"]})">'
+        f'<circle class="g-tip" cx="{tipx:.2f}" cy="{tipy:.2f}" r="8" style="stroke:{c2}"/></g>'
+        f'</svg><div class="gauge-center"><div class="g-val"><span class="g-num">{fmt(v)}</span>'
+        f'<small>{unit}</small></div><div class="g-sub">{html.escape(sub)}</div></div></div>'
+    )
+
+
+def _leg(label, color, watts, sub):
+    """Per-string / per-leg metric block shown under a gauge (PV1/PV2, L1/L2)."""
+    w = max(0.0, min(100.0, (watts or 0) / 4000 * 100))
+    return (f'<div class="leg"><span class="leg-top"><i class="swatch" style="background:{color}"></i>{label}</span>'
+            f'<span class="leg-val"><span>{fmt(watts)}</span> W</span>'
+            f'<div class="leg-bar"><div style="background:{color};width:{w:.0f}%"></div></div>'
+            f'<span class="leg-sub">{html.escape(sub)}</span></div>')
+
+
+_ICON_SUN = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+             '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6L19 19'
+             'M19 5l-1.4 1.4M6.4 17.6L5 19"/></svg>')
+_ICON_INV = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+             '<path d="M12 3v8"/><path d="M7.3 6.3a7 7 0 1 0 9.4 0"/></svg>')
+_ICON_BATT = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+              'stroke-linejoin="round"><rect x="2.5" y="8" width="16" height="9" rx="2"/><path d="M21.5 11.5v2"/>'
+              '<path d="M6 12.5h6"/></svg>')
+
+
+def _flow(cur):
+    """Power-flow diagram (Solar -> Inverter -> Battery). The pure-CSS dot animation runs in the static page."""
+    pv = round(cur.get("pv_power") or 0)
+    load = round(cur.get("load_total") or 0)
+    batt = round(cur.get("battery_power") or 0)
+    charging = (cur.get("battery_current") or 0) >= 0
+    tone = "#34D399" if charging else "#FBBF24"
+    solar_w = " active" if pv > 0 else ""
+    batt_w = (" active" if abs(batt) > 5 else "") + ("" if charging else " reverse")
+    bic_bg = "rgba(52,211,153,0.13)" if charging else "rgba(251,191,36,0.13)"
+    return (
+        '<div class="flow">'
+        f'<div class="flow-node" data-n="solar"><div class="flow-ic" style="color:#22D3EE;background:rgba(34,211,238,0.13)">{_ICON_SUN}</div>'
+        f'<div class="flow-val">{fmt(pv)} W</div><div class="flow-lbl">Solar</div></div>'
+        f'<div class="flow-wire{solar_w}" data-w="solar"><span class="flow-line"></span><span class="flow-dot" style="background:#22D3EE"></span></div>'
+        f'<div class="flow-node" data-n="inv"><div class="flow-ic" style="color:#EAF0F6;background:#1C212B">{_ICON_INV}</div>'
+        f'<div class="flow-val">{fmt(load)} W</div><div class="flow-lbl">Inverter</div></div>'
+        f'<div class="flow-wire{batt_w}" data-w="batt"><span class="flow-line"></span><span class="flow-dot" style="background:{tone}"></span></div>'
+        f'<div class="flow-node" data-n="batt"><div class="flow-ic" style="color:{tone};background:{bic_bg}">{_ICON_BATT}</div>'
+        f'<div class="flow-val">{"+" if batt > 0 else ""}{fmt(batt)} W</div><div class="flow-lbl">Battery</div></div>'
+        '</div>'
+    )
+
+
+def _nice_step(mx, target=4):
+    """'Nice' axis step (1/2/5 x 10^n) so the energy-bar ticks are round numbers."""
+    raw = (mx or 1) / target
+    if raw <= 0:
+        return 1
+    powv = 10 ** math.floor(math.log10(raw))
+    n = raw / powv
+    s = 1 if n < 1.5 else 2 if n < 3 else 5 if n < 7 else 10
+    return s * powv
+
+
+def _energy_bars(hourly):
+    """Today's hourly Solar vs Load as the dashboard's grouped energy bars (pure HTML/CSS)."""
+    if not hourly:
+        return '<div class="ebars-empty">No energy logged yet today — give it a bit.</div>'
+    slots = [{"label": (b.get("bucket") or "")[-5:-3], "pv": b.get("pv_kwh") or 0, "load": b.get("load_kwh") or 0}
+             for b in hourly]
+    max_v = max((max(s["pv"], s["load"]) for s in slots), default=0)
+    step = _nice_step(max_v)
+    axis_max = max(step, math.ceil(max_v / step) * step) if max_v else step
+    fmt_t = lambda t: "0" if abs(t) < 1e-9 else (f"{t:.1f}" if axis_max < 10 else str(round(t)))
+    ticks, t = [], axis_max
+    while t > -1e-9:
+        ticks.append(t)
+        t -= step
+    axis = '<div class="eaxis">' + "".join(f"<span>{fmt_t(tk)}</span>" for tk in ticks) + "</div>"
+    bars = "".join(
+        f'<div class="ebar-group"><div class="ebar-plot">'
+        f'<div class="ebar ebar-in" style="height:{s["pv"] / axis_max * 100:.1f}%"></div>'
+        f'<div class="ebar ebar-out" style="height:{s["load"] / axis_max * 100:.1f}%"></div></div>'
+        f'<div class="ebar-x">{html.escape(s["label"])}</div></div>'
+        for s in slots
+    )
+    return f'<div class="ebars">{axis}<div class="ebars-track">{bars}</div></div>'
 
 
 def _pack_card(p):
-    soc = p.get("soc")
-    return (f'<div class="pack"><div class="nm">{html.escape(str(p.get("name", "pack")))}</div>'
-            f'<div class="pc">{fmt(soc)}<small>%</small></div>'
-            f'<div class="bar"><i style="width:{max(0.0, min(100.0, soc or 0)):.0f}%;background:var(--charge)"></i></div>'
-            f'<div class="sub">{fmt(p.get("voltage"), 2)} V · {fmt(p.get("temp_max"), 1)}° · Δ{fmt(p.get("cell_delta"), 3)} V</div></div>')
+    """One battery pack, using the dashboard's bd-pack + socbar markup."""
+    soc_n = p.get("soc")
+    soc = max(0.0, min(100.0, soc_n or 0))
+    charging = (p.get("current") or 0) >= 0
+    fill = "#FBBF24" if (soc_n or 0) <= 15 else ("#34D399" if charging else "#FBBF24")
+    cls = "val-pos" if charging else "val-neg"
+    par = f'<span class="bd-pack-par">#{p["parallel"]}</span> ' if p.get("parallel") else ""
+    a = p.get("current")
+    return (f'<div class="bd-pack"><div class="bd-pack-head">'
+            f'<span class="bd-pack-name">{par}{html.escape(str(p.get("name", "")))}</span>'
+            f'<span class="bd-pack-soc {cls}">{fmt(soc_n)}<small>%</small></span></div>'
+            f'<div class="socbar"><div class="socbar-fill" style="width:{soc:.0f}%;background:{fill}"></div>'
+            f'<div class="socbar-seg"></div></div>'
+            f'<div class="bd-pack-stats">{fmt(p.get("voltage"), 2)} V · '
+            f'<span class="{cls}">{"+" if (a or 0) >= 0 else ""}{fmt(a, 1)} A</span> · '
+            f'{fmt(p.get("temp_max"), 1)}°C</div></div>')
 
 
 def _snapshot_doc(cur, today, hourly, life, batt):
-    """Assemble the full self-contained HTML document from the captured API payloads."""
+    """Assemble the full self-contained HTML document, mirroring the dashboard's layout."""
     ts = cur.get("ts") or int(time.time())
     age = int(time.time()) - ts
-    dot, lab = ("live", "live") if age <= 120 else ("stale", "stale") if age <= 600 else ("down", "old")
+    dot, lab = ("live", "live") if age <= 120 else (("stale", "stale") if age <= 600 else ("down", "old"))
     when = time.strftime("%a %d %b %Y · %I:%M %p %Z", time.localtime(ts))
     gen = time.strftime("%a %d %b %Y · %I:%M %p %Z", time.localtime())
 
+    # Today strip
     today_html = (
-        '<section class="panel"><h2 class="panel-title">Today</h2><div class="today">'
-        f'<div class="lt in"><label>Input · Solar</label><div class="v">{fmt(today.get("pv_kwh"), 1)}<small>kWh</small></div></div>'
-        f'<div class="lt out"><label>Output · Load</label><div class="v">{fmt(today.get("load_kwh"), 1)}<small>kWh</small></div></div>'
-        f'<div class="lt"><label>Battery charged</label><div class="v">{fmt(today.get("charge_kwh"), 1)}<small>kWh</small></div></div>'
-        f'<div class="lt"><label>Battery discharged</label><div class="v">{fmt(today.get("discharge_kwh"), 1)}<small>kWh</small></div></div>'
+        '<section class="lifetime"><div class="lt-head">Today</div><div class="lt-grid">'
+        f'<div class="lt-item in"><label>Input · Solar</label><div class="lt-val"><span>{fmt(today.get("pv_kwh"), 1)}</span><small>kWh</small></div></div>'
+        f'<div class="lt-item out"><label>Output · Load</label><div class="lt-val"><span>{fmt(today.get("load_kwh"), 1)}</span><small>kWh</small></div></div>'
+        f'<div class="lt-item"><label>Battery charged</label><div class="lt-val"><span>{fmt(today.get("charge_kwh"), 1)}</span><small>kWh</small></div></div>'
+        f'<div class="lt-item"><label>Battery discharged</label><div class="lt-val"><span>{fmt(today.get("discharge_kwh"), 1)}</span><small>kWh</small></div></div>'
         '</div></section>'
     )
 
-    pv, load = cur.get("pv_power"), cur.get("load_total")
+    # Gauges + legs (PV / Load) — the dials
+    pv_panel = (
+        '<div class="panel"><div class="panel-head"><span class="panel-title">Solar PV</span></div>'
+        + _gauge("pv", cur.get("pv_power"), 4000, "#22D3EE", "#4F9CF9", "W", "total input")
+        + '<div class="legs">'
+        + _leg("PV1", "#22D3EE", cur.get("pv1_power"), f'{fmt(cur.get("pv1_voltage"), 1)} V · {fmt(cur.get("pv1_current"), 1)} A')
+        + '<div class="leg-div"></div>'
+        + _leg("PV2", "#4F9CF9", cur.get("pv2_power"), f'{fmt(cur.get("pv2_voltage"), 1)} V · {fmt(cur.get("pv2_current"), 1)} A')
+        + '</div></div>'
+    )
+    load_panel = (
+        '<div class="panel"><div class="panel-head"><span class="panel-title">AC Output · Load</span></div>'
+        + _gauge("load", cur.get("load_total"), 4000, "#9C8CFB", "#9C8CFB", "W", "real power · L1+L2")
+        + '<div class="legs">'
+        + _leg("L1", "#9C8CFB", cur.get("load_power"), f'{fmt(cur.get("load_voltage"), 1)} V · {fmt(cur.get("load_current"), 1)} A')
+        + '<div class="leg-div"></div>'
+        + _leg("L2", "#9C8CFB", cur.get("load_l2_power"), f'{fmt(cur.get("load_l2_voltage"), 1)} V · {fmt(cur.get("load_l2_current"), 1)} A')
+        + '</div></div>'
+    )
+
+    # Battery bank panel
     soc, bw = cur.get("battery_soc"), cur.get("battery_power")
     charging = (cur.get("battery_current") or 0) >= 0
     tone = "var(--charge)" if charging else "var(--discharge)"
-    sign = "+" if (bw or 0) > 0 else ""
+    pill_cls, pill_txt = ("green", "charging") if charging else ("amber", "discharging")
     eta_min, kind = cur.get("battery_eta_minutes"), cur.get("battery_eta_kind")
     eta = "holding / idle" if eta_min is None else (f"▲ {hm(eta_min)} to full" if kind == "full" else f"▼ {hm(eta_min)} to empty")
-
-    batt_tile = (
-        '<div class="panel tile"><div class="k">Battery</div>'
-        f'<div class="big" style="color:{tone}">{fmt(soc)}<small>%</small></div>'
-        f'<div class="bar"><i style="width:{max(0.0, min(100.0, soc or 0)):.0f}%;background:{tone}"></i></div>'
-        f'<div class="sub" style="color:{tone}">{sign}{fmt(bw)} W {"charging" if charging else "discharging"}</div>'
-        f'<div class="sub">{fmt(cur.get("battery_voltage"), 1)} V · {html.escape(eta)}</div></div>'
-    )
-    temps_tile = (
-        '<div class="panel tile"><div class="k">Temperatures</div>'
-        f'<div class="big">{fmt(cur.get("battery_temp"), 1)}<small>°C batt</small></div>'
-        f'<div class="sub">DC {fmt(cur.get("dc_temp"), 1)}° · AC {fmt(cur.get("ac_temp"), 1)}°</div></div>'
-    )
-    hero_html = (
-        '<section class="hero">'
-        + _tile("Solar PV", fmt(pv), "W", f'PV1 {fmt(cur.get("pv1_power"))} · PV2 {fmt(cur.get("pv2_power"))} W', "var(--pv)", (pv or 0) / 4000 * 100)
-        + _tile("Load", fmt(load), "W", f'L1 {fmt(cur.get("load_power"))} · L2 {fmt(cur.get("load_l2_power"))} W', "var(--load)", (load or 0) / 4000 * 100)
-        + batt_tile + temps_tile + '</section>'
+    bank = (batt or {}).get("bank") or {}
+    batt_temp = bank.get("temp_max") if bank.get("temp_max") is not None else cur.get("battery_temp")
+    socp = max(0.0, min(100.0, soc or 0))
+    batt_panel = (
+        '<div class="panel battery-panel"><div class="panel-head"><span class="panel-title">Battery bank</span>'
+        f'<span class="pill {pill_cls}">{pill_txt}</span></div>'
+        f'<div class="batt-top"><div class="batt-soc">{fmt(soc)}<small>%</small></div>'
+        f'<div class="batt-watts" style="color:{tone}">{"+" if (bw or 0) > 0 else ""}{fmt(bw)} W</div></div>'
+        f'<div class="socbar"><div class="socbar-fill" style="width:{socp:.0f}%;background:{tone}"></div><div class="socbar-seg"></div></div>'
+        f'<div class="batt-eta">{html.escape(eta)}</div>'
+        '<div class="batt-foot">'
+        f'<div><span>{fmt(cur.get("battery_voltage"), 1)}<small> V</small></span><label>Voltage</label></div>'
+        f'<div><span>{"+" if (cur.get("battery_current") or 0) >= 0 else ""}{fmt(cur.get("battery_current"), 1)}<small> A</small></span><label>Current</label></div>'
+        f'<div><span>{fmt(batt_temp, 1)}<small> °C</small></span><label>Temp</label></div>'
+        '</div></div>'
     )
 
-    chart_html = (
-        '<section class="panel section"><h2 class="panel-title">Today · hourly energy</h2>'
-        '<div class="legend"><span><i style="background:#FBBF24"></i>Solar (kWh)</span>'
-        '<span><i style="background:#9C8CFB"></i>Load (kWh)</span></div>'
-        f'{_svg_hourly(hourly)}</section>'
-    )
+    flow_panel = ('<div class="panel flow-panel"><div class="panel-head"><span class="panel-title">Power flow</span></div>'
+                  + _flow(cur) + '</div>')
 
-    packs = (batt or {}).get("packs") or []
-    if packs:
-        bank = (batt or {}).get("bank") or {}
-        batt_html = (
-            f'<section class="panel section"><h2 class="panel-title">Battery bank · '
-            f'{fmt(bank.get("soc"))}% · {fmt(bank.get("voltage"), 1)} V</h2>'
-            f'<div class="packs">{"".join(_pack_card(p) for p in packs)}</div></section>'
-        )
-    else:
-        batt_html = ""
+    hero_html = (f'<section class="hero">{pv_panel}{load_panel}'
+                 f'<div class="col4">{flow_panel}{batt_panel}</div></section>')
 
+    # Secondary tiles: Temperatures / Machine state / Status
     faults = cur.get("faults") or []
     if faults:
-        txt = ", ".join(f'F{int(f.get("code", 0)):02d} {html.escape(str(f.get("text", "")))}' for f in faults)
-        status_html = f'<section class="panel section"><h2 class="panel-title">Status</h2><div class="fault">⚠ {txt}</div></section>'
+        fcodes = " ".join(f'F{int(f.get("code", 0)):02d}' for f in faults)
+        ftext = ", ".join(html.escape(str(f.get("text", ""))) for f in faults)
+        fault_tile = (f'<div class="tile alert has-fault" data-k="fault"><div class="tile-label">Status</div>'
+                      f'<div class="tile-value">{fcodes}</div><div class="tile-sub">{ftext}</div></div>')
     else:
-        status_html = '<section class="panel section"><h2 class="panel-title">Status</h2><div class="ok">● OK — no active faults</div></section>'
+        fault_tile = ('<div class="tile alert" data-k="fault"><div class="tile-label">Status</div>'
+                      '<div class="tile-value ok">OK</div><div class="tile-sub">No active faults</div></div>')
+    state = cur.get("machine_state")
+    state_txt = html.escape(str(state)) if state not in (None, "") else "—"
+    tiles_html = (
+        '<section class="tiles">'
+        f'<div class="tile" data-k="temp"><div class="tile-label">Temperatures</div>'
+        f'<div class="tile-value"><span>{fmt(cur.get("dc_temp"), 1)}</span><small> DC</small></div>'
+        f'<div class="tile-sub">AC {fmt(cur.get("ac_temp"), 1)}° · batt {fmt(batt_temp, 1)}°</div></div>'
+        f'<div class="tile" data-k="state"><div class="tile-label">Machine state</div>'
+        f'<div class="tile-value"><span>{state_txt}</span></div>'
+        f'<div class="tile-sub">inverter status</div></div>'
+        f'{fault_tile}</section>'
+    )
 
-    foot = (f'<div class="foot">Lifetime {fmt(life.get("pv_kwh"), 1)} kWh in · {fmt(life.get("load_kwh"), 1)} kWh out'
-            f' — static snapshot generated {html.escape(gen)}. Not live.</div>')
+    # Energy trends (today, hourly)
+    energy_html = (
+        '<section class="card energy-card"><div class="chart-head"><h2>Energy trends · today (hourly)</h2></div>'
+        f'<div class="etotals"><span class="et in">Solar <b>{fmt(today.get("pv_kwh"), 1)}</b> kWh</span>'
+        f'<span class="et out">Load <b>{fmt(today.get("load_kwh"), 1)}</b> kWh</span></div>'
+        f'{_energy_bars(hourly)}'
+        '<div class="legend"><span class="item"><i class="swatch" style="background:#FBBF24"></i>Solar PV</span>'
+        '<span class="item"><i class="swatch" style="background:#9C8CFB"></i>AC Output</span></div></section>'
+    )
+
+    # Battery per-pack detail
+    packs = (batt or {}).get("packs") or []
+    if packs:
+        packs = sorted(packs, key=lambda p: p.get("parallel") if p.get("parallel") is not None else 99)
+        detail_html = ('<section class="card battery-detail-card"><div class="chart-head">'
+                       '<h2>Batteries · Per-pack state of charge</h2></div>'
+                       f'<div class="bd-packs">{"".join(_pack_card(p) for p in packs)}</div></section>')
+    else:
+        detail_html = ""
+
+    foot = (f'<footer class="foot">Solar Tracking · static snapshot generated {html.escape(gen)}<br>'
+            f'<span class="snap-note">Lifetime {fmt(life.get("pv_kwh"), 1)} kWh in · '
+            f'{fmt(life.get("load_kwh"), 1)} kWh out — not live</span></footer>')
 
     return (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>'
         '<meta name="viewport" content="width=device-width, initial-scale=1"/>'
-        f'<title>Solar snapshot · {html.escape(when)}</title><style>{_SNAPSHOT_CSS}</style></head><body>'
-        f'<header class="topbar"><div class="brand"><span class="dot {dot}"></span><h1>Solar Tracking</h1>'
-        f'<span class="badge">snapshot</span></div>'
-        f'<div class="status">{html.escape(lab)} · {html.escape(when)}</div></header>'
-        f'<main>{today_html}{hero_html}{chart_html}{batt_html}{status_html}{foot}</main></body></html>'
+        f'<title>Solar snapshot · {html.escape(when)}</title>'
+        f'<style>{_dashboard_css()}{_SNAP_TWEAKS}</style></head><body class="hide-acin">'
+        '<header class="topbar"><div class="brand">'
+        f'<span class="dot {dot}"></span><h1>Solar Tracking</h1><span class="badge">snapshot</span></div>'
+        f'<div class="top-right"><div class="status">{html.escape(lab)} · {html.escape(when)}</div></div></header>'
+        f'<main>{today_html}{hero_html}{tiles_html}{energy_html}{detail_html}{foot}</main></body></html>'
     )
 
 
