@@ -415,7 +415,7 @@ _SNAP_SCRIPT = """<script>
 
 
 def _power_history_svg(ts, pv, load, batt):
-    """Inline SVG line chart of the last 24 h: Solar / Load / Battery power (W), no JS, no deps.
+    """Inline SVG line chart of the last 6 h: Solar / Load / Battery power (W), no JS, no deps.
     Negative battery (discharging) dips below the zero line; gaps in a series break the line."""
     t0, t1 = ts[0], ts[-1]
     span = (t1 - t0) or 1
@@ -428,7 +428,7 @@ def _power_history_svg(ts, pv, load, batt):
     pw, ph = W - L - R, H - T - B
     xf = lambda t: L + (t - t0) / span * pw
     yf = lambda v: T + (ymax - v) / (ymax - ymin) * ph
-    p = [f'<svg viewBox="0 0 {W} {H}" class="ph-svg" role="img" aria-label="Power history, last 24 hours">']
+    p = [f'<svg viewBox="0 0 {W} {H}" class="ph-svg" role="img" aria-label="Power history, last 6 hours">']
     ystep = _nice_step(ymax - ymin, 4)
     tick = math.floor(ymin / ystep) * ystep
     while tick <= ymax + 1e-9:  # y gridlines + W labels (the zero line is drawn a touch stronger)
@@ -464,9 +464,9 @@ def _power_history_svg(ts, pv, load, batt):
 
 
 def _power_history(hist, life):
-    """Power-history card (header with lifetime totals + the 24 h line chart + legend)."""
+    """Power-history card (header with lifetime totals + the 6 h line chart + legend)."""
     head = ('<section class="card chart-card"><div class="chart-head"><div class="head-left">'
-            '<h2>Power history · last 24h</h2>'
+            '<h2>Power history · last 6h</h2>'
             '<div class="lt-inline"><span class="lti-title">Lifetime</span>'
             f'<span class="lti in">Solar <b>{fmt(life.get("pv_kwh"), 1)}</b></span>'
             f'<span class="lti out">Load <b>{fmt(life.get("load_kwh"), 1)}</b></span> kWh</div>'
@@ -667,7 +667,7 @@ def render_snapshot():
         batt = {}
     try:
         now_s = int(time.time())
-        hist = get(f"/api/history?fields=pv_power,load_total,battery_power&start={now_s - 86400}&max_points=400")
+        hist = get(f"/api/history?fields=pv_power,load_total,battery_power&start={now_s - 6 * 3600}&max_points=360")
     except Exception:
         hist = {}
 

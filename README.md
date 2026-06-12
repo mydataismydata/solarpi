@@ -64,7 +64,7 @@ The CLI is stdlib-only and just reads the local JSON API (override the target wi
 `solar snapshot` captures the live dashboard into a **single self-contained HTML file** — the
 radial PV/Load dials (with a working **W/A toggle**), the power-flow diagram, the battery bank
 with per-pack state of charge, the Today strip, a **clickable** 24-hour energy-trends chart
-(with its own in-browser **Export CSV**), and a 24-hour **power-history** line chart — with no
+(with its own in-browser **Export CSV**), and a 6-hour **power-history** line chart — with no
 JavaScript frameworks, no network calls, and no external files. Copy it to your laptop and open
 it in any browser for a point-in-time view of the system, even fully offline. It inlines the
 dashboard's own stylesheet, so it always matches the live look.
@@ -82,6 +82,60 @@ solar snapshot
 
 See **[Remote access & pulling files off the Pi](#remote-access--pulling-files-off-the-pi-tailscale)**
 below for getting those files onto your machine from anywhere.
+
+### Scheduled hourly snapshots (optional)
+
+To keep a rolling gallery, have the Pi write a snapshot every hour and auto-delete any older than
+7 days — a **systemd user timer**, same pattern as the dashboard service.
+
+Create `~/.config/systemd/user/solardash-snapshot.service`:
+
+```ini
+[Unit]
+Description=Write a Solar dashboard HTML snapshot, then prune old ones
+After=solardash.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/solardash
+EnvironmentFile=-%h/solardash/solardash.env
+# 1) write the snapshot   2) delete snapshots older than 7 days
+ExecStart=%h/solardash/.venv/bin/python -m solardash.cli snapshot
+ExecStart=/usr/bin/find %h/solardash/exports -maxdepth 1 -type f -name "solar-snapshot-*.html" -mtime +7 -delete
+```
+
+Create `~/.config/systemd/user/solardash-snapshot.timer`:
+
+```ini
+[Unit]
+Description=Hourly Solar dashboard snapshot
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it (linger from the dashboard setup lets it run with no one logged in):
+
+```
+systemctl --user daemon-reload
+systemctl --user enable --now solardash-snapshot.timer
+```
+
+Handy checks:
+
+```
+systemctl --user list-timers solardash-snapshot.timer   # next / last run
+systemctl --user start solardash-snapshot.service       # run one right now
+journalctl --user -u solardash-snapshot.service -n 20   # see its output
+```
+
+Snapshots accumulate in `~/solardash/exports/` as `solar-snapshot-<date>_<time>.html`; the `find`
+step trims anything past 7 days on every run. Tune the cadence with `OnCalendar=` (e.g. `*:0/30`
+for every 30 min) and the retention with `-mtime +7`.
 
 ## Remote access & pulling files off the Pi (Tailscale)
 
