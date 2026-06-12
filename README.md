@@ -62,11 +62,12 @@ The CLI is stdlib-only and just reads the local JSON API (override the target wi
 ### Offline snapshot & CSV export
 
 `solar snapshot` captures the live dashboard into a **single self-contained HTML file** — the
-radial PV/Load dials, the power-flow diagram, the battery bank with per-pack state of charge,
-the Today strip, and a **clickable 24-hour energy-trends chart** — with no JavaScript
-frameworks, no network calls, and no external files. Copy it to your laptop and open it in any
-browser for a point-in-time view of the system, even fully offline. It inlines the dashboard's
-own stylesheet, so it always matches the live look.
+radial PV/Load dials (with a working **W/A toggle**), the power-flow diagram, the battery bank
+with per-pack state of charge, the Today strip, a **clickable** 24-hour energy-trends chart
+(with its own in-browser **Export CSV**), and a 24-hour **power-history** line chart — with no
+JavaScript frameworks, no network calls, and no external files. Copy it to your laptop and open
+it in any browser for a point-in-time view of the system, even fully offline. It inlines the
+dashboard's own stylesheet, so it always matches the live look.
 
 `solar export-hourly` writes today's hourly energy as CSV (`hour, solar_kwh, load_kwh,
 battery_charged_kwh, battery_discharged_kwh`) for spreadsheets.

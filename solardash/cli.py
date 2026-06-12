@@ -158,6 +158,7 @@ _SNAP_TWEAKS = (
     ".badge{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--txt3);"
     "border:1px solid var(--line);border-radius:999px;padding:2px 9px}"
     ".snap-note{color:var(--txt3);font-size:12px}"
+    ".ph-svg{display:block;width:100%;height:auto;margin-top:6px}.ph-svg text{font-family:var(--mono)}"
 )
 
 # Minimal fallback, only used if web/style.css can't be read (unusual install layout).
@@ -413,6 +414,76 @@ _SNAP_SCRIPT = """<script>
 </script>"""
 
 
+def _power_history_svg(ts, pv, load, batt):
+    """Inline SVG line chart of the last 24 h: Solar / Load / Battery power (W), no JS, no deps.
+    Negative battery (discharging) dips below the zero line; gaps in a series break the line."""
+    t0, t1 = ts[0], ts[-1]
+    span = (t1 - t0) or 1
+    vals = [v for arr in (pv, load, batt) for v in arr if v is not None]
+    ymax = max(vals + [0.0])
+    ymin = min(vals + [0.0])
+    if ymax <= ymin:
+        ymax = ymin + 1
+    W, H, L, R, T, B = 960, 260, 50, 12, 10, 22
+    pw, ph = W - L - R, H - T - B
+    xf = lambda t: L + (t - t0) / span * pw
+    yf = lambda v: T + (ymax - v) / (ymax - ymin) * ph
+    p = [f'<svg viewBox="0 0 {W} {H}" class="ph-svg" role="img" aria-label="Power history, last 24 hours">']
+    ystep = _nice_step(ymax - ymin, 4)
+    tick = math.floor(ymin / ystep) * ystep
+    while tick <= ymax + 1e-9:  # y gridlines + W labels (the zero line is drawn a touch stronger)
+        y = yf(tick)
+        strong = abs(tick) < 1e-9
+        p.append(f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#262C37" stroke-width="{1.4 if strong else 1}"/>')
+        p.append(f'<text x="{L - 6}" y="{y + 3:.1f}" text-anchor="end" font-size="10" fill="#626C7B">{tick:,.0f}</text>')
+        tick += ystep
+    for i in range(5):  # ~5 time labels across the span
+        t = t0 + span * i / 4
+        p.append(f'<text x="{xf(t):.1f}" y="{H - 7}" text-anchor="middle" font-size="10" fill="#626C7B">'
+                 f'{time.strftime("%H:%M", time.localtime(t))}</text>')
+
+    def line(arr, color):  # one polyline per contiguous (gap-free) run of points
+        runs, seg = [], []
+        for i, v in enumerate(arr):
+            if v is None:
+                if len(seg) > 1:
+                    runs.append(seg)
+                seg = []
+            else:
+                seg.append(f"{xf(ts[i]):.1f},{yf(v):.1f}")
+        if len(seg) > 1:
+            runs.append(seg)
+        return "".join(f'<polyline points="{" ".join(s)}" fill="none" stroke="{color}" '
+                       f'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' for s in runs)
+
+    p.append(line(batt, "#34D399"))
+    p.append(line(load, "#9C8CFB"))
+    p.append(line(pv, "#FBBF24"))
+    p.append("</svg>")
+    return "".join(p)
+
+
+def _power_history(hist, life):
+    """Power-history card (header with lifetime totals + the 24 h line chart + legend)."""
+    head = ('<section class="card chart-card"><div class="chart-head"><div class="head-left">'
+            '<h2>Power history · last 24h</h2>'
+            '<div class="lt-inline"><span class="lti-title">Lifetime</span>'
+            f'<span class="lti in">Solar <b>{fmt(life.get("pv_kwh"), 1)}</b></span>'
+            f'<span class="lti out">Load <b>{fmt(life.get("load_kwh"), 1)}</b></span> kWh</div>'
+            '</div></div>')
+    ts = (hist or {}).get("ts") or []
+    series = (hist or {}).get("series") or {}
+    if not ts:
+        return head + '<div class="ebars-empty">No power history recorded yet — give it a bit.</div></section>'
+    svg = _power_history_svg(ts, series.get("pv_power") or [], series.get("load_total") or [],
+                             series.get("battery_power") or [])
+    legend = ('<div class="legend">'
+              '<span class="item"><i class="swatch" style="background:#FBBF24"></i>Solar PV</span>'
+              '<span class="item"><i class="swatch" style="background:#9C8CFB"></i>Load</span>'
+              '<span class="item"><i class="swatch" style="background:#34D399"></i>Battery</span></div>')
+    return head + svg + legend + '</section>'
+
+
 def _pack_card(p):
     """One battery pack, using the dashboard's bd-pack + socbar markup."""
     soc_n = p.get("soc")
@@ -432,7 +503,7 @@ def _pack_card(p):
             f'{fmt(p.get("temp_max"), 1)}°C</div></div>')
 
 
-def _snapshot_doc(cur, today, hourly, life, batt):
+def _snapshot_doc(cur, today, hourly, life, batt, hist):
     """Assemble the full self-contained HTML document, mirroring the dashboard's layout."""
     ts = cur.get("ts") or int(time.time())
     age = int(time.time()) - ts
@@ -548,9 +619,10 @@ def _snapshot_doc(cur, today, hourly, life, batt):
     else:
         detail_html = ""
 
+    power_history_html = _power_history(hist, life)
+
     foot = (f'<footer class="foot">Solar Tracking · static snapshot generated {html.escape(gen)}<br>'
-            f'<span class="snap-note">Lifetime {fmt(life.get("pv_kwh"), 1)} kWh in · '
-            f'{fmt(life.get("load_kwh"), 1)} kWh out — not live</span></footer>')
+            '<span class="snap-note">A point-in-time capture — not live. The dashboard itself auto-updates.</span></footer>')
 
     return (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>'
@@ -561,7 +633,7 @@ def _snapshot_doc(cur, today, hourly, life, batt):
         '<header class="topbar"><div class="brand">'
         f'<span class="dot {dot}"></span><h1>Solar Tracking</h1><span class="badge">snapshot</span></div>'
         f'<div class="top-right"><div class="status">{html.escape(lab)} · {html.escape(when)}</div></div></header>'
-        f'<main>{today_html}{hero_html}{detail_html}{tiles_html}{energy_html}{foot}</main>'
+        f'<main>{today_html}{hero_html}{detail_html}{tiles_html}{energy_html}{power_history_html}{foot}</main>'
         f'{_SNAP_SCRIPT}</body></html>'
     )
 
@@ -593,8 +665,13 @@ def render_snapshot():
         batt = get("/api/battery")
     except Exception:
         batt = {}
+    try:
+        now_s = int(time.time())
+        hist = get(f"/api/history?fields=pv_power,load_total,battery_power&start={now_s - 86400}&max_points=400")
+    except Exception:
+        hist = {}
 
-    doc = _snapshot_doc(cur, today, hourly, life, batt)
+    doc = _snapshot_doc(cur, today, hourly, life, batt, hist)
     try:
         os.makedirs(EXPORT_DIR, exist_ok=True)
         path = os.path.join(EXPORT_DIR, f"solar-snapshot-{time.strftime('%Y-%m-%d_%H%M', now)}.html")
