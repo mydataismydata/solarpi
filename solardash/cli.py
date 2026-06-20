@@ -503,8 +503,12 @@ def _pack_card(p):
             f'{fmt(p.get("temp_max"), 1)}°C</div></div>')
 
 
-def _snapshot_doc(cur, today, hourly, life, batt, hist):
-    """Assemble the full self-contained HTML document, mirroring the dashboard's layout."""
+def snapshot_doc(cur, today, hourly, life, batt, hist):
+    """Assemble the full self-contained HTML document, mirroring the dashboard's layout.
+
+    Pure: takes the six already-fetched payloads and returns an HTML string, so both the CLI
+    (`solar snapshot`, fetching over HTTP) and the server's POST /api/snapshot (reading the
+    store directly) can share it."""
     ts = cur.get("ts") or int(time.time())
     age = int(time.time()) - ts
     dot, lab = ("live", "live") if age <= 120 else (("stale", "stale") if age <= 600 else ("down", "old"))
@@ -671,7 +675,7 @@ def render_snapshot():
     except Exception:
         hist = {}
 
-    doc = _snapshot_doc(cur, today, hourly, life, batt, hist)
+    doc = snapshot_doc(cur, today, hourly, life, batt, hist)
     try:
         os.makedirs(EXPORT_DIR, exist_ok=True)
         path = os.path.join(EXPORT_DIR, f"solar-snapshot-{time.strftime('%Y-%m-%d_%H%M', now)}.html")

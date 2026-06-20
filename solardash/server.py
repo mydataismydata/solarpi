@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 
-from . import api
+from . import api, cli
 from .bms_poller import BmsPoller
 from .client import InverterClient
 from .config import Config
@@ -128,21 +129,46 @@ async def revalidate_static(request, call_next):
     return response
 
 
-@app.get("/api/current")
-async def current():
-    # Prefer the BMS-derived bank capacity for the ETA; fall back to the configured value.
+def _battery_capacity_wh() -> float:
+    """Prefer the BMS-derived bank capacity, falling back to the configured value. Watt-hours."""
     cap_kwh = app.state.cfg.battery_capacity_kwh
     bp = app.state.bms_poller
     if bp is not None and bp.bank is not None:
         cap_kwh = bp.bank.capacity_kwh
+    return cap_kwh * 1000
+
+
+@app.get("/api/current")
+async def current():
     return api.current_payload(
-        app.state.store, app.state.catalog, battery_capacity_wh=cap_kwh * 1000
+        app.state.store, app.state.catalog, battery_capacity_wh=_battery_capacity_wh()
     )
 
 
 @app.get("/api/battery")
 async def battery():
     return api.battery_payload(app.state.bms_poller)
+
+
+@app.post("/api/snapshot")
+async def snapshot():
+    """Capture the live dashboard as a self-contained static HTML file on the server (same output
+    as the `solar snapshot` CLI), saved under SOLAR_EXPORT_DIR. Returns the written path."""
+    inputs = api.snapshot_inputs(
+        app.state.store, app.state.catalog, app.state.bms_poller, _battery_capacity_wh()
+    )
+    if not inputs[0].get("available"):
+        return {"ok": False, "error": "no data yet — nothing to snapshot"}
+    doc = cli.snapshot_doc(*inputs)
+    try:
+        os.makedirs(cli.EXPORT_DIR, exist_ok=True)
+        filename = f"solar-snapshot-{time.strftime('%Y-%m-%d_%H%M', time.localtime())}.html"
+        path = os.path.join(cli.EXPORT_DIR, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doc)
+    except OSError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "filename": filename, "path": path, "dir": cli.EXPORT_DIR}
 
 
 @app.get("/api/history")

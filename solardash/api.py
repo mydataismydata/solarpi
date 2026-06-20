@@ -3,7 +3,8 @@ on a bare Python. server.py is a thin FastAPI adapter that just calls these.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+import time
+from typing import Dict, List, Optional, Tuple
 
 from .db import NUMERIC_COLUMNS, TimeSeriesStore
 from .faults import FaultCatalog
@@ -99,6 +100,34 @@ def energy_payload(
 def lifetime_payload(store: TimeSeriesStore) -> Dict[str, object]:
     """All-time input (PV) / output (load) energy totals (kWh) for the header strip."""
     return store.energy_lifetime()
+
+
+def snapshot_inputs(
+    store: TimeSeriesStore,
+    catalog: Optional[FaultCatalog],
+    bms_poller,
+    battery_capacity_wh: Optional[float] = None,
+) -> Tuple[dict, dict, list, dict, dict, dict]:
+    """Gather the six payloads a static HTML snapshot needs, straight from the store/pollers
+    (no HTTP). The in-process twin of what `solar snapshot` fetches over the API, so the server's
+    POST /api/snapshot and the CLI feed the same `cli.snapshot_doc(...)` builder.
+
+    Returns (current, today_bucket, hourly_buckets, lifetime, battery, history).
+    """
+    cur = current_payload(store, catalog, battery_capacity_wh=battery_capacity_wh)
+    now = time.localtime()
+    today_mid = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+    day_key = time.strftime("%Y-%m-%d", now)
+    days = energy_payload(store, "day", start=today_mid - 86400)["buckets"]  # yesterday + today
+    today = next((b for b in days if b.get("bucket") == day_key), {})
+    hourly = energy_payload(store, "hour", start=today_mid)["buckets"]
+    life = lifetime_payload(store)
+    batt = battery_payload(bms_poller)
+    now_s = int(time.time())
+    hist = history_payload(
+        store, ["pv_power", "load_total", "battery_power"], start=now_s - 6 * 3600, max_points=360
+    )
+    return cur, today, hourly, life, batt, hist
 
 
 def battery_payload(poller) -> Dict[str, object]:

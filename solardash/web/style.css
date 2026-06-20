@@ -209,6 +209,12 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .theme-toggle .i-sun { display: none; }
 :root[data-theme="light"] .theme-toggle .i-moon { display: none; }
 :root[data-theme="light"] .theme-toggle .i-sun { display: block; }
+.snap-btn { background: transparent; border: none; color: var(--txt2); cursor: pointer; padding: 5px; display: flex; border-radius: 8px; }
+.snap-btn:hover { color: var(--txt); background: var(--surface2); }
+.snap-btn:disabled { cursor: default; }
+.snap-btn svg { width: 19px; height: 19px; }
+.snap-btn.busy { animation: snap-pulse 0.9s ease-in-out infinite; }
+@keyframes snap-pulse { 50% { opacity: 0.35; } }
 .settings { position: relative; }
 .gear { background: transparent; border: none; color: var(--txt2); cursor: pointer; padding: 5px; display: flex; border-radius: 8px; }
 .gear:hover { color: var(--txt); background: var(--surface2); }
@@ -285,3 +291,14 @@ body.hide-acin .acin-panel { display: none; }
 @media (min-width: 1040px) { body.hide-acin .hero { grid-template-columns: repeat(3, 1fr); } }
 body.hide-battery #batteryDetailCard { display: none; }
 body.hide-energy #energyCard { display: none; }
+body.hide-history #historyCard { display: none; }
+body.hide-battery-history #batteryHistoryCard { display: none; }
+
+/* Snapshot confirmation toast (bottom-centre, auto-dismissed). */
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60;
+  background: var(--surface2); border: 1px solid var(--line-strong); border-radius: 10px;
+  padding: 10px 16px; font-size: 13px; font-weight: 600; color: var(--txt);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55); max-width: min(90vw, 460px); text-align: center; }
+.toast[hidden] { display: none; }
+.toast.ok { border-color: var(--charge, #34D399); }
+.toast.err { border-color: var(--discharge, #FBBF24); }

@@ -22,7 +22,9 @@ const acinGauge = new Gauge($("acinGauge"), { id: "acin", max: 4000, unit: "W", 
 renderFlow($("flow"));
 
 let chart = null;
+let batteryChart = null;
 let activeWin = 86400;
+let activeBattWin = 86400;
 let activePeriod = "hour";
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
 let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
@@ -235,6 +237,93 @@ function onChartClick(e) {
   showPopupAt(html, e.clientX, e.clientY);
 }
 
+// ---- battery history chart (state of charge, %) ---------------------------
+
+function batteryChartOpts(width) {
+  const axisStroke = cssVar("--txt3") || C.txt3;
+  const gridStroke = cssVar("--line") || C.line;
+  const axis = { stroke: axisStroke, grid: { stroke: gridStroke, width: 1 }, ticks: { stroke: gridStroke } };
+  return {
+    width, height: 300, legend: { show: false },
+    cursor: { y: false, points: { size: 6 } },
+    scales: { x: { time: true }, y: { range: [0, 100] } }, // charge is always 0–100%
+    series: [
+      {},
+      { label: "Charge", stroke: C.charge, width: 2, fill: "rgba(52,211,153,0.10)", spanGaps: false },
+    ],
+    axes: [
+      { ...axis },
+      { ...axis, size: 44, values: (u, vals) => vals.map((v) => v + "%") },
+    ],
+  };
+}
+
+function renderBatteryLegend() {
+  $("batteryLegend").innerHTML =
+    `<span class="item"><span class="swatch" style="background:${C.charge}"></span>Battery charge (%)</span>`;
+}
+
+async function loadBatteryHistory(win) {
+  const now = Math.floor(Date.now() / 1000);
+  const url = `api/history?fields=battery_soc&start=${now - win}&max_points=600`;
+  let payload;
+  try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
+
+  const data = [payload.ts, payload.series.battery_soc || []];
+  const width = $("batteryChart").clientWidth || 800;
+  if (batteryChart) {
+    batteryChart.setData(data);
+    batteryChart.setSize({ width, height: 300 });
+  } else {
+    batteryChart = new uPlot(batteryChartOpts(width), data, $("batteryChart"));
+    batteryChart.over.addEventListener("click", onBatteryChartClick);
+  }
+}
+
+// Click the Battery history to pin a popup with the charge at that moment.
+function onBatteryChartClick(e) {
+  if (!batteryChart) return;
+  const idx = batteryChart.cursor.idx;
+  if (idx == null) return;
+  e.stopPropagation();
+  const ts = batteryChart.data[0][idx];
+  const soc = batteryChart.data[1][idx];
+  const when = new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const html =
+    `<div class="pop-title">${when}</div>` +
+    `<div class="pop-row"><i style="background:${C.charge}"></i>Charge<b>${soc == null ? "—" : Math.round(soc) + "%"}</b></div>`;
+  showPopupAt(html, e.clientX, e.clientY);
+}
+
+// ---- snapshot (camera button) ---------------------------------------------
+
+let _toastTimer = null;
+function showToast(msg, tone) {
+  const t = $("toast");
+  if (!t) return;
+  t.textContent = msg;
+  t.className = "toast" + (tone ? " " + tone : "");
+  t.hidden = false;
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+}
+
+async function takeSnapshot() {
+  const btn = $("snapBtn");
+  btn.disabled = true;
+  btn.classList.add("busy");
+  try {
+    const j = await (await fetch("api/snapshot", { method: "POST" })).json();
+    if (j.ok) showToast(`Snapshot saved · ${j.filename}`, "ok");
+    else showToast(j.error || "Snapshot failed", "err");
+  } catch (e) {
+    showToast("Snapshot failed — dashboard unreachable", "err");
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("busy");
+  }
+}
+
 // ---- lifetime + energy trends ---------------------------------------------
 
 // Top strip: today's running totals (the day's bucket from the daily roll-up).
@@ -366,19 +455,25 @@ function initERanges() {
 
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", batteryHistory: "solar.showBatteryHistory" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
   const acin = getBool(SETTING.acin, true);
   const battery = getBool(SETTING.battery, true);
   const energy = getBool(SETTING.energy, true);
+  const history = getBool(SETTING.history, true);
+  const batteryHistory = getBool(SETTING.batteryHistory, true);
   document.body.classList.toggle("hide-acin", !acin);
   document.body.classList.toggle("hide-battery", !battery);
   document.body.classList.toggle("hide-energy", !energy);
+  document.body.classList.toggle("hide-history", !history);
+  document.body.classList.toggle("hide-battery-history", !batteryHistory);
   $("toggleAcIn").checked = acin;
   $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
+  $("toggleHistory").checked = history;
+  $("toggleBatteryHistory").checked = batteryHistory;
 }
 
 function initSettings() {
@@ -392,6 +487,8 @@ function initSettings() {
   bind(SETTING.acin, "toggleAcIn");
   bind(SETTING.battery, "toggleBattery");
   bind(SETTING.energy, "toggleEnergy");
+  bind(SETTING.history, "toggleHistory");
+  bind(SETTING.batteryHistory, "toggleBatteryHistory");
 }
 
 // ---- per-tile W/A unit toggles (Solar PV / AC Output / AC Input) -----------
@@ -431,7 +528,9 @@ function initTheme() {
     applyTheme(next);
     // uPlot paints axes/grid onto a canvas, so rebuild it to pick up the new theme colors.
     if (chart) { chart.destroy(); chart = null; }
+    if (batteryChart) { batteryChart.destroy(); batteryChart = null; }
     loadHistory(activeWin);
+    loadBatteryHistory(activeBattWin);
   });
 }
 
@@ -446,27 +545,44 @@ function initRanges() {
   });
 }
 
+function initBatteryRanges() {
+  $("bRanges").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    document.querySelectorAll("#bRanges button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeBattWin = Number(btn.dataset.win);
+    loadBatteryHistory(activeBattWin);
+  });
+}
+
 window.addEventListener("resize", () => {
   if (chart) chart.setSize({ width: $("chart").clientWidth || 800, height: 300 });
+  if (batteryChart) batteryChart.setSize({ width: $("batteryChart").clientWidth || 800, height: 300 });
 });
 
 initTheme();
 renderLegend();
+renderBatteryLegend();
 initRanges();
+initBatteryRanges();
 initERanges();
 initEbarPopup($("ebars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
+$("snapBtn").addEventListener("click", takeSnapshot);
 initSettings();
 initUnitToggles();
 loadBattery();
 loadCurrent();
 loadHistory(activeWin);
+loadBatteryHistory(activeBattWin);
 loadToday();
 loadLifetime();
 loadEnergy(activePeriod);
 setInterval(loadCurrent, 5000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
+setInterval(() => loadBatteryHistory(activeBattWin), 30000);
 setInterval(loadToday, 60000);
 setInterval(loadLifetime, 60000);
 setInterval(() => loadEnergy(activePeriod), 60000);

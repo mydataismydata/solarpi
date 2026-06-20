@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from solardash import api
+from solardash import api, cli
 from solardash.db import TimeSeriesStore
 from solardash.faults import FaultCatalog
 from solardash.inverter import InverterStatus
@@ -76,6 +76,26 @@ class ApiTest(unittest.TestCase):
         out = api.history_payload(self.store, ["pv_power", "bogus_field"])
         self.assertEqual(out["fields"], ["pv_power"])  # derived column kept, bogus dropped
         self.assertEqual(out["series"]["pv_power"], [500.0])
+
+    def test_snapshot_inputs_shape(self):
+        # Empty store -> current is unavailable; the server endpoint relies on this to bail out.
+        cur, today, hourly, life, batt, hist = api.snapshot_inputs(self.store, self.catalog, None)
+        self.assertFalse(cur.get("available"))
+        self.assertIsInstance(today, dict)
+        self.assertIsInstance(hourly, list)
+        self.assertIn("battery_power", hist["series"])  # power-history series for the snapshot chart
+
+    def test_snapshot_doc_renders_self_contained_html(self):
+        import time as _time
+        # A reading at "now" so it lands in today's buckets and the snapshot reports it as live.
+        self.store.insert(InverterStatus(battery_soc=72, battery_voltage=53.0, pv1_voltage=120.0, pv1_current=8.0), ts=int(_time.time()))
+        inputs = api.snapshot_inputs(self.store, self.catalog, None, battery_capacity_wh=4800)
+        self.assertTrue(inputs[0]["available"])
+        doc = cli.snapshot_doc(*inputs)
+        self.assertTrue(doc.startswith("<!DOCTYPE html>"))
+        self.assertIn("Power history", doc)
+        self.assertIn("snapshot", doc)
+        self.assertNotIn("http://", doc)  # self-contained: no external network references
 
 
 if __name__ == "__main__":
