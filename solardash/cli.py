@@ -464,8 +464,9 @@ def _power_history_svg(ts, pv, load, batt):
 
 
 def _peak_kw(w):
-    """'(peak 2.39 kW)' from an all-time peak in watts; '' when there's none yet."""
-    return "" if not w or w <= 0 else f"(peak {w / 1000:.2f} kW)"
+    """'(peak 2.39 kW)' from an all-time peak in watts; '' when there's none yet. The number is
+    bolded so it picks up the Solar/Load colour from the enclosing .lti.in / .lti.out."""
+    return "" if not w or w <= 0 else f"(peak <b>{w / 1000:.2f}</b> kW)"
 
 
 def _power_history(hist, life):
@@ -615,10 +616,8 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
     energy_html = (
         '<section class="card energy-card"><div class="chart-head"><div class="head-left">'
         '<h2>Energy trends · today (hourly)</h2><div class="lt-inline">'
-        f'<span class="lti in">Input <b>{fmt(today.get("pv_kwh"), 1)}</b></span>'
-        f'<span class="lti out">Output <b>{fmt(today.get("load_kwh"), 1)}</b></span>'
-        f'<span class="lti">Max input <b>{fmt(max_in, 2)}</b></span>'
-        f'<span class="lti">Max output <b>{fmt(max_out, 2)}</b> kWh</span></div></div>'
+        f'<span class="lti in">Input <b>{fmt(today.get("pv_kwh"), 1)}</b> <span class="lti-peak">(max <b>{fmt(max_in, 2)}</b>)</span></span>'
+        f'<span class="lti out">Output <b>{fmt(today.get("load_kwh"), 1)}</b> <span class="lti-peak">(max <b>{fmt(max_out, 2)}</b>)</span> kWh</span></div></div>'
         '<button class="export-btn" id="snapExport" title="Download the hourly data as CSV">Export CSV</button></div>'
         f'{_energy_bars(hourly)}'
         '<div class="legend"><span class="item"><i class="swatch" style="background:#FBBF24"></i>Solar PV</span>'

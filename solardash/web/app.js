@@ -391,8 +391,9 @@ async function loadToday() {
   } catch (e) { /* leave dashes */ }
 }
 
-// "(peak 2.39 kW)" from an all-time peak in watts; blank until there's a reading.
-const peakKw = (w) => (w == null || w <= 0 ? "" : `(peak ${fmt(w / 1000, 2)} kW)`);
+// "(peak 2.39 kW)" from an all-time peak in watts; blank until there's a reading. The number is
+// bolded so it inherits the Solar/Load colour from the enclosing .lti.in / .lti.out.
+const peakKw = (w) => (w == null || w <= 0 ? "" : `(peak <b>${fmt(w / 1000, 2)}</b> kW)`);
 
 // All-time totals, shown compactly in the Power history header. The Solar/Load peaks are all-time
 // (independent of the chart's time range), so they don't move when the range buttons change.
@@ -403,8 +404,8 @@ async function loadLifetime() {
     $("life_out").textContent = fmt(lt.load_kwh, 1);
     $("life_charge").textContent = fmt(lt.charge_kwh, 1);
     $("life_discharge").textContent = fmt(lt.discharge_kwh, 1);
-    $("life_in_peak").textContent = peakKw(lt.pv_peak_w);
-    $("life_out_peak").textContent = peakKw(lt.load_peak_w);
+    $("life_in_peak").innerHTML = peakKw(lt.pv_peak_w);
+    $("life_out_peak").innerHTML = peakKw(lt.load_peak_w);
     if (lt.since) $("lifeInline").title = "Lifetime since " + new Date(lt.since * 1000).toLocaleDateString();
   } catch (e) { /* leave dashes */ }
 }
