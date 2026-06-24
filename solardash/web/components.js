@@ -255,14 +255,20 @@ function initEbarPopup(container) {
 /* Grouped energy bar chart over pre-built calendar slots [{label, pv, load, charge, discharge} in
    kWh], with a fixed kWh scale on the left. Every slot renders a column (empty slots show a flat
    baseline), so the full day/month/year grid is always shown. Click a column for a detail popup. */
-function renderEnergyBars(container, slots) {
+function renderEnergyBars(container, slots, visible) {
   hideEbarPopup();
   if (!slots || !slots.length) {
     container.innerHTML = '<div class="ebars-empty">No energy logged yet — give it a bit.</div>';
     return;
   }
+  // Which series the legend currently shows (defaults to both); the kWh axis scales to only these.
+  const showIn = !visible || visible.pv !== false;
+  const showOut = !visible || visible.load !== false;
   let maxV = 0;
-  for (const s of slots) maxV = Math.max(maxV, s.pv, s.load);
+  for (const s of slots) {
+    if (showIn) maxV = Math.max(maxV, s.pv);
+    if (showOut) maxV = Math.max(maxV, s.load);
+  }
   const step = niceStep(maxV);
   const axisMax = Math.max(step, Math.ceil(maxV / step) * step);
   const fmtTick = (t) =>
@@ -276,11 +282,10 @@ function renderEnergyBars(container, slots) {
     .map((s) => {
       const ih = (s.pv / axisMax) * 100;
       const oh = (s.load / axisMax) * 100;
+      const inBar = showIn ? `<div class="ebar ebar-in" style="height:${ih.toFixed(1)}%"></div>` : "";
+      const outBar = showOut ? `<div class="ebar ebar-out" style="height:${oh.toFixed(1)}%"></div>` : "";
       return `<div class="ebar-group" data-label="${s.label}" data-title="${s.title || s.label}" data-pv="${s.pv}" data-load="${s.load}" data-charge="${s.charge || 0}" data-discharge="${s.discharge || 0}">
-        <div class="ebar-plot">
-          <div class="ebar ebar-in" style="height:${ih.toFixed(1)}%"></div>
-          <div class="ebar ebar-out" style="height:${oh.toFixed(1)}%"></div>
-        </div>
+        <div class="ebar-plot">${inBar}${outBar}</div>
         <div class="ebar-x">${s.label}</div>
       </div>`;
     })

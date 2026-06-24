@@ -117,6 +117,20 @@ class TimeSeriesStore:
                 "  charge_wh REAL NOT NULL DEFAULT 0,\n"
                 "  discharge_wh REAL NOT NULL DEFAULT 0\n)"
             )
+            # All-time peak instantaneous power (W): a single row holding the highest pv_power /
+            # load_total ever sampled. Rolled forward on insert() so the lifetime-peak read is O(1)
+            # (no full-table scan every minute) and survives sample pruning. Seeded from any history
+            # already on disk so an upgrade reflects past peaks immediately.
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS energy_peaks (\n"
+                "  id INTEGER PRIMARY KEY CHECK (id = 1),\n"
+                "  pv_w REAL NOT NULL DEFAULT 0,\n"
+                "  load_w REAL NOT NULL DEFAULT 0\n)"
+            )
+            self._conn.execute(
+                "INSERT OR IGNORE INTO energy_peaks (id, pv_w, load_w) "
+                "SELECT 1, COALESCE(MAX(pv_power), 0), COALESCE(MAX(load_total), 0) FROM inverter_samples"
+            )
             self._conn.commit()
 
     def insert(self, status: InverterStatus, ts: Optional[int] = None) -> int:
@@ -126,10 +140,19 @@ class TimeSeriesStore:
         cols = ["ts"] + COLUMN_NAMES
         placeholders = ", ".join("?" for _ in cols)
         values = [ts] + [row[name] for name in COLUMN_NAMES]
+        pv_peak = row.get("pv_power") or 0
+        load_peak = row.get("load_total") or 0
         with self._lock:
             self._conn.execute(
                 f"INSERT INTO inverter_samples ({', '.join(cols)}) VALUES ({placeholders})",
                 values,
+            )
+            # Roll the all-time power peaks forward with this sample.
+            self._conn.execute(
+                "INSERT INTO energy_peaks (id, pv_w, load_w) VALUES (1, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "  pv_w = MAX(pv_w, excluded.pv_w), load_w = MAX(load_w, excluded.load_w)",
+                (pv_peak, load_peak),
             )
             self._conn.commit()
         return ts
@@ -272,17 +295,20 @@ class TimeSeriesStore:
         return out[-limit:] if limit else out
 
     def energy_lifetime(self) -> Dict[str, object]:
-        """All-time energy totals (kWh) plus the span covered."""
+        """All-time energy totals (kWh), peak instantaneous power (W), and the span covered."""
         with self._lock:
             r = self._conn.execute(
                 "SELECT SUM(pv_wh) pv, SUM(load_wh) load, SUM(charge_wh) charge, "
                 "SUM(discharge_wh) discharge, MIN(hour) since, MAX(hour) last FROM energy_hourly"
             ).fetchone()
+            p = self._conn.execute("SELECT pv_w, load_w FROM energy_peaks WHERE id = 1").fetchone()
         return {
             "pv_kwh": round((r["pv"] or 0) / 1000.0, 3),
             "load_kwh": round((r["load"] or 0) / 1000.0, 3),
             "charge_kwh": round((r["charge"] or 0) / 1000.0, 3),
             "discharge_kwh": round((r["discharge"] or 0) / 1000.0, 3),
+            "pv_peak_w": round(p["pv_w"], 1) if p else None,
+            "load_peak_w": round(p["load_w"], 1) if p else None,
             "since": r["since"],
             "last": r["last"],
         }

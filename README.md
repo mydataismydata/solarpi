@@ -28,13 +28,13 @@ The energy-trends chart rolls input vs. output up by hour, day, or month; hover 
 |---------|--------|
 | ![Energy trends, monthly](docs/img/solar-pi-dark-w-monthly.jpg) | ![Energy trends, yearly](docs/img/solar-pi-dark-w-yearly.jpg) |
 
-Click on any bar to see the details.
+The header summarises the selected period: total input/output plus the peak (max input / max output) bucket. Click on any bar to see the details. Click a label in the legend to show/hide that series — the kWh axis rescales to whatever's left, and the choice is remembered.
 
 ![Energy trends detail with hover tooltip](docs/img/solar-pi-energy-trends-detail.jpg)
 
 ### Power history
 
-A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store.
+A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store. The lifetime totals in the header also carry the all-time peak Solar and Load power (e.g. `peak 2.39 kW`), which stays fixed as you change the range. Click a label in the legend to show/hide that line; the axis rescales to the remaining series and the choice is remembered.
 
 | Last 24 hours | Last 7 days |
 |---------------|-------------|

@@ -166,6 +166,12 @@ async function loadBattery() {
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+// Clickable-legend visibility, persisted per chart+series so a hidden line/bar stays hidden
+// across reloads (mirrors how the W/A units, theme and panel toggles persist). Default = shown.
+const seriesVisKey = (chartName, key) => `solar.series.${chartName}.${key}`;
+const seriesVisible = (chartName, key) => localStorage.getItem(seriesVisKey(chartName, key)) !== "0";
+const setSeriesVisible = (chartName, key, vis) => localStorage.setItem(seriesVisKey(chartName, key), vis ? "1" : "0");
+
 function chartOpts(width) {
   // Read neutrals from CSS so the canvas axes/grid follow the active light/dark theme.
   const axisStroke = cssVar("--txt3") || C.txt3;
@@ -177,9 +183,9 @@ function chartOpts(width) {
     scales: { x: { time: true } },
     series: [
       {},
-      { label: "Solar", stroke: C.pv, width: 2, fill: "rgba(251,191,36,0.10)", spanGaps: false },
-      { label: "Load", stroke: C.load, width: 2, spanGaps: false },
-      { label: "Battery", stroke: C.charge, width: 2, spanGaps: false },
+      { label: "Solar", stroke: C.pv, width: 2, fill: "rgba(251,191,36,0.10)", spanGaps: false, show: seriesVisible("history", "pv") },
+      { label: "Load", stroke: C.load, width: 2, spanGaps: false, show: seriesVisible("history", "load") },
+      { label: "Battery", stroke: C.charge, width: 2, spanGaps: false, show: seriesVisible("history", "battery") },
     ],
     axes: [
       { ...axis },
@@ -188,11 +194,32 @@ function chartOpts(width) {
   };
 }
 
+// Series shown in the Power-history chart, in uPlot series order; `idx` is the uPlot series index.
+const HISTORY_SERIES = [
+  { key: "pv", idx: 1, label: "Solar PV", color: C.pv },
+  { key: "load", idx: 2, label: "Load", color: C.load },
+  { key: "battery", idx: 3, label: "Battery", color: C.charge },
+];
+
 function renderLegend() {
-  const items = [["Solar PV", C.pv], ["Load", C.load], ["Battery", C.charge]];
-  $("legend").innerHTML = items
-    .map(([n, c]) => `<span class="item"><span class="swatch" style="background:${c}"></span>${n} (W)</span>`)
+  $("legend").innerHTML = HISTORY_SERIES
+    .map((s) => `<span class="item${seriesVisible("history", s.key) ? "" : " off"}" data-key="${s.key}" title="Show/hide ${s.label}"><span class="swatch" style="background:${s.color}"></span>${s.label} (W)</span>`)
     .join("");
+}
+
+// Make the Power-history legend clickable: each item shows/hides its line, and uPlot rescales the
+// y-axis to whatever is left. Delegated on the container, so it survives legend re-renders.
+function initLegend() {
+  $("legend").addEventListener("click", (e) => {
+    const item = e.target.closest(".item");
+    if (!item) return;
+    const s = HISTORY_SERIES.find((x) => x.key === item.dataset.key);
+    if (!s) return;
+    const next = !seriesVisible("history", s.key);
+    setSeriesVisible("history", s.key, next);
+    item.classList.toggle("off", !next);
+    if (chart) chart.setSeries(s.idx, { show: next });
+  });
 }
 
 async function loadHistory(win) {
@@ -270,6 +297,7 @@ async function loadBatteryHistory(win) {
   try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
 
   const data = [payload.ts, payload.series.battery_soc || []];
+  updateBatteryStats(data[0], data[1], win);
   const width = $("batteryChart").clientWidth || 800;
   if (batteryChart) {
     batteryChart.setData(data);
@@ -278,6 +306,28 @@ async function loadBatteryHistory(win) {
     batteryChart = new uPlot(batteryChartOpts(width), data, $("batteryChart"));
     batteryChart.over.addEventListener("click", onBatteryChartClick);
   }
+}
+
+// When a max/min occurred. Windows longer than a day include the date, since "@ 3:45 PM" alone
+// would be ambiguous across days.
+function atLabel(ts, win) {
+  const d = new Date(ts * 1000);
+  const t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return win > 86400 ? `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${t}` : t;
+}
+
+// Header Max/Min charge for the window currently shown, each tagged with when it happened.
+function updateBatteryStats(ts, soc, win) {
+  let maxV = -Infinity, minV = Infinity, maxTs = null, minTs = null;
+  for (let i = 0; i < soc.length; i++) {
+    const v = soc[i];
+    if (v == null) continue;
+    if (v > maxV) { maxV = v; maxTs = ts[i]; }
+    if (v < minV) { minV = v; minTs = ts[i]; }
+  }
+  if (maxTs == null) { $("batt_max").textContent = "—"; $("batt_min").textContent = "—"; return; }
+  $("batt_max").textContent = `${Math.round(maxV)}% @ ${atLabel(maxTs, win)}`;
+  $("batt_min").textContent = `${Math.round(minV)}% @ ${atLabel(minTs, win)}`;
 }
 
 // Click the Battery history to pin a popup with the charge at that moment.
@@ -341,7 +391,11 @@ async function loadToday() {
   } catch (e) { /* leave dashes */ }
 }
 
-// All-time totals, shown compactly in the Power history header.
+// "(peak 2.39 kW)" from an all-time peak in watts; blank until there's a reading.
+const peakKw = (w) => (w == null || w <= 0 ? "" : `(peak ${fmt(w / 1000, 2)} kW)`);
+
+// All-time totals, shown compactly in the Power history header. The Solar/Load peaks are all-time
+// (independent of the chart's time range), so they don't move when the range buttons change.
 async function loadLifetime() {
   try {
     const lt = await (await fetch("api/energy/lifetime", { cache: "no-store" })).json();
@@ -349,6 +403,8 @@ async function loadLifetime() {
     $("life_out").textContent = fmt(lt.load_kwh, 1);
     $("life_charge").textContent = fmt(lt.charge_kwh, 1);
     $("life_discharge").textContent = fmt(lt.discharge_kwh, 1);
+    $("life_in_peak").textContent = peakKw(lt.pv_peak_w);
+    $("life_out_peak").textContent = peakKw(lt.load_peak_w);
     if (lt.since) $("lifeInline").title = "Lifetime since " + new Date(lt.since * 1000).toLocaleDateString();
   } catch (e) { /* leave dashes */ }
 }
@@ -399,18 +455,22 @@ async function loadEnergy(period) {
   catch (e) { return; }
   const byKey = {};
   for (const b of payload.buckets || []) byKey[b.bucket] = b;
-  let tin = 0, tout = 0;
+  let tin = 0, tout = 0, maxIn = 0, maxOut = 0;
   const merged = slots.map((s) => {
     const d = byKey[s.key];
     const pv = d ? d.pv_kwh : 0, load = d ? d.load_kwh : 0;
     tin += pv; tout += load;
+    if (pv > maxIn) maxIn = pv;
+    if (load > maxOut) maxOut = load;
     return { key: s.key, label: s.label, title: s.title, pv, load, charge: d ? d.charge_kwh : 0, discharge: d ? d.discharge_kwh : 0 };
   });
   energyView = { period, rows: merged };
-  $("etotals").innerHTML =
-    `<span class="et in">Input <b>${fmt(tin, 1)}</b> kWh</span>` +
-    `<span class="et out">Output <b>${fmt(tout, 1)}</b> kWh</span>`;
-  renderEnergyBars($("ebars"), merged);
+  // Totals + peak bucket for the selected period (the peak is the single highest hour/day/month).
+  $("e_in").textContent = fmt(tin, 1);
+  $("e_out").textContent = fmt(tout, 1);
+  $("e_max_in").textContent = fmt(maxIn, 2);
+  $("e_max_out").textContent = fmt(maxOut, 2);
+  renderEnergyBars($("ebars"), merged, energyVisible());
 }
 
 function csvCell(s) {
@@ -439,10 +499,31 @@ function exportEnergyCSV() {
   URL.revokeObjectURL(url);
 }
 
+// Series in the Energy-trends bar chart; the bottom legend toggles each one.
+const ENERGY_SERIES = [
+  { key: "pv", label: "Input · Solar (kWh)", color: "#FBBF24" },
+  { key: "load", label: "Output · Load (kWh)", color: "#9C8CFB" },
+];
+const energyVisible = () => ({ pv: seriesVisible("energy", "pv"), load: seriesVisible("energy", "load") });
+
+function renderEnergyLegend() {
+  $("elegend").innerHTML = ENERGY_SERIES
+    .map((s) => `<span class="item${seriesVisible("energy", s.key) ? "" : " off"}" data-key="${s.key}" title="Show/hide ${s.label}"><span class="swatch" style="background:${s.color}"></span>${s.label}</span>`)
+    .join("");
+}
+
 function initERanges() {
-  $("elegend").innerHTML =
-    '<span class="item"><span class="swatch" style="background:#FBBF24"></span>Input · Solar (kWh)</span>' +
-    '<span class="item"><span class="swatch" style="background:#9C8CFB"></span>Output · Load (kWh)</span>';
+  renderEnergyLegend();
+  // Clickable legend: toggle a bar series, then re-render so the kWh axis rescales to what's shown.
+  $("elegend").addEventListener("click", (e) => {
+    const item = e.target.closest(".item");
+    if (!item) return;
+    const key = item.dataset.key;
+    const next = !seriesVisible("energy", key);
+    setSeriesVisible("energy", key, next);
+    item.classList.toggle("off", !next);
+    if (energyView) renderEnergyBars($("ebars"), energyView.rows, energyVisible());
+  });
   $("eranges").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -563,6 +644,7 @@ window.addEventListener("resize", () => {
 
 initTheme();
 renderLegend();
+initLegend();
 renderBatteryLegend();
 initRanges();
 initBatteryRanges();

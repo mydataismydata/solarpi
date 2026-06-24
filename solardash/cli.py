@@ -463,13 +463,20 @@ def _power_history_svg(ts, pv, load, batt):
     return "".join(p)
 
 
+def _peak_kw(w):
+    """'(peak 2.39 kW)' from an all-time peak in watts; '' when there's none yet."""
+    return "" if not w or w <= 0 else f"(peak {w / 1000:.2f} kW)"
+
+
 def _power_history(hist, life):
-    """Power-history card (header with lifetime totals + the 6 h line chart + legend)."""
+    """Power-history card (header with lifetime totals + all-time peaks + the 6 h line chart)."""
     head = ('<section class="card chart-card"><div class="chart-head"><div class="head-left">'
             '<h2>Power history · last 6h</h2>'
             '<div class="lt-inline"><span class="lti-title">Lifetime</span>'
-            f'<span class="lti in">Solar <b>{fmt(life.get("pv_kwh"), 1)}</b></span>'
-            f'<span class="lti out">Load <b>{fmt(life.get("load_kwh"), 1)}</b></span> kWh</div>'
+            f'<span class="lti in">Solar <b>{fmt(life.get("pv_kwh"), 1)}</b> '
+            f'<span class="lti-peak">{_peak_kw(life.get("pv_peak_w"))}</span></span>'
+            f'<span class="lti out">Load <b>{fmt(life.get("load_kwh"), 1)}</b> '
+            f'<span class="lti-peak">{_peak_kw(life.get("load_peak_w"))}</span></span> kWh</div>'
             '</div></div>')
     ts = (hist or {}).get("ts") or []
     series = (hist or {}).get("series") or {}
@@ -602,12 +609,17 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
         f'{fault_tile}</section>'
     )
 
-    # Energy trends (today, hourly) — with a client-side CSV export
+    # Energy trends (today, hourly) — totals + peak hour in the header (like the live app), CSV export
+    max_in = max((b.get("pv_kwh") or 0 for b in (hourly or [])), default=0)
+    max_out = max((b.get("load_kwh") or 0 for b in (hourly or [])), default=0)
     energy_html = (
-        '<section class="card energy-card"><div class="chart-head"><h2>Energy trends · today (hourly)</h2>'
+        '<section class="card energy-card"><div class="chart-head"><div class="head-left">'
+        '<h2>Energy trends · today (hourly)</h2><div class="lt-inline">'
+        f'<span class="lti in">Input <b>{fmt(today.get("pv_kwh"), 1)}</b></span>'
+        f'<span class="lti out">Output <b>{fmt(today.get("load_kwh"), 1)}</b></span>'
+        f'<span class="lti">Max input <b>{fmt(max_in, 2)}</b></span>'
+        f'<span class="lti">Max output <b>{fmt(max_out, 2)}</b> kWh</span></div></div>'
         '<button class="export-btn" id="snapExport" title="Download the hourly data as CSV">Export CSV</button></div>'
-        f'<div class="etotals"><span class="et in">Solar <b>{fmt(today.get("pv_kwh"), 1)}</b> kWh</span>'
-        f'<span class="et out">Load <b>{fmt(today.get("load_kwh"), 1)}</b> kWh</span></div>'
         f'{_energy_bars(hourly)}'
         '<div class="legend"><span class="item"><i class="swatch" style="background:#FBBF24"></i>Solar PV</span>'
         '<span class="item"><i class="swatch" style="background:#9C8CFB"></i>AC Output</span></div></section>'

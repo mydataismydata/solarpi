@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sim.inverter_sim import InverterSimulator
-from solardash import api
+from solardash import api, inverter
 from solardash.client import InverterClient
 from solardash.db import TimeSeriesStore
 from solardash.poller import Poller
@@ -52,6 +52,15 @@ class EnergyStoreTest(unittest.TestCase):
         self.store.accrue(ts=3600, dt_s=0, pv_w=1000, load_w=0, batt_w=0)
         self.store.accrue(ts=3600, dt_s=-5, pv_w=1000, load_w=0, batt_w=0)
         self.assertEqual(self.store.energy_lifetime()["pv_kwh"], 0.0)
+
+    def test_lifetime_tracks_power_peaks(self):
+        # Peaks come from insert()ed samples (instantaneous power), and hold the all-time max
+        # across samples — not the latest, and independent of the energy accumulators.
+        self.store.insert(inverter.InverterStatus(pv1_voltage=100.0, pv1_current=10.0, load_power=1500), ts=10)
+        self.store.insert(inverter.InverterStatus(pv1_voltage=100.0, pv1_current=20.0, load_power=900), ts=20)
+        lt = self.store.energy_lifetime()
+        self.assertAlmostEqual(lt["pv_peak_w"], 2000.0, places=1)    # max PV (2nd sample) wins
+        self.assertAlmostEqual(lt["load_peak_w"], 1500.0, places=1)  # max load (1st sample) wins
 
     def test_api_payloads(self):
         self.store.accrue(ts=3600, dt_s=3600, pv_w=1500, load_w=1000, batt_w=0)

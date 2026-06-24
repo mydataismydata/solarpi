@@ -183,7 +183,15 @@
 
     <section class="card energy-card" id="energyCard">
       <div class="chart-head">
-        <h2>Energy trends</h2>
+        <div class="head-left">
+          <h2>Energy trends</h2>
+          <div class="lt-inline" id="etotalsInline" title="Totals for the selected period">
+            <span class="lti in">Input <b id="e_in">—</b></span>
+            <span class="lti out">Output <b id="e_out">—</b></span>
+            <span class="lti">Max input <b id="e_max_in">—</b></span>
+            <span class="lti">Max output <b id="e_max_out">—</b> kWh</span>
+          </div>
+        </div>
         <div class="head-right">
           <div class="ranges" id="eranges">
             <button data-period="hour" class="active">Daily</button>
@@ -193,7 +201,6 @@
           <button class="export-btn" id="exportBtn" title="Download the current view as CSV">Export data</button>
         </div>
       </div>
-      <div class="etotals" id="etotals"></div>
       <div class="ebars" id="ebars"></div>
       <div class="legend" id="elegend"></div>
     </section>
@@ -204,8 +211,8 @@
           <h2>Power history</h2>
           <div class="lt-inline" id="lifeInline" title="Lifetime totals">
             <span class="lti-title">Lifetime</span>
-            <span class="lti in">Solar <b id="life_in">—</b></span>
-            <span class="lti out">Load <b id="life_out">—</b></span>
+            <span class="lti in">Solar <b id="life_in">—</b> <span class="lti-peak" id="life_in_peak"></span></span>
+            <span class="lti out">Load <b id="life_out">—</b> <span class="lti-peak" id="life_out_peak"></span></span>
             <span class="lti">Charged <b id="life_charge">—</b></span>
             <span class="lti">Discharged <b id="life_discharge">—</b> kWh</span>
           </div>
@@ -226,6 +233,10 @@
       <div class="chart-head">
         <div class="head-left">
           <h2>Battery history</h2>
+          <div class="lt-inline" id="battStats" title="Peak charge over the selected window">
+            <span class="lti">Max <b id="batt_max">—</b></span>
+            <span class="lti">Min <b id="batt_min">—</b></span>
+          </div>
         </div>
         <div class="ranges" id="bRanges">
           <button data-win="3600">1H</button>
