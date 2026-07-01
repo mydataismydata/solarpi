@@ -31,7 +31,10 @@ let activePeriod = "hour";
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
 let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
 let lastCurrent = null; // last /api/current payload, so the W/A toggle can re-render instantly
-let msPowerOn = false;  // latest mini-split on/off state, for the power toggle button
+let msPowerOn = false;        // latest mini-split on/off state
+let msCooldownRemaining = 0;  // seconds left in the server-enforced power lockout
+let msPowerBusy = false;      // a power command is in flight
+let msApplianceAvailable = false;
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -173,6 +176,25 @@ const msMode = (m) => MS_MODE[String(m || "").toLowerCase()] || prettyMs(m);
 
 const MS_MAX = 3000; // dial + leg-bar scale (watts) for the mini-split's total draw
 
+const mmss = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+
+// Single source of truth for the power button's look: on/off, in-flight, or locked (server cooldown).
+function syncPowerBtn() {
+  const btn = $("ms_power_btn"), lbl = $("ms_cooldown");
+  const locked = msCooldownRemaining > 0;
+  btn.classList.toggle("on", msPowerOn && !locked);
+  btn.classList.toggle("busy", msPowerBusy);
+  btn.disabled = !msApplianceAvailable || msPowerBusy || locked;
+  if (locked) {
+    lbl.textContent = mmss(msCooldownRemaining);
+    lbl.hidden = false;
+    btn.title = `Locked ${mmss(msCooldownRemaining)} — compressor protection`;
+  } else {
+    lbl.hidden = true;
+    btn.title = "Turn the mini-split on/off";
+  }
+}
+
 function updateAppliance(d) {
   if (!d || !d.available) {
     setPill($("ms_pill"), "Off", "");
@@ -185,7 +207,9 @@ function updateAppliance(d) {
     }
     $("ms_tile_temp").textContent = "—";
     $("ms_tile_sub").textContent = d ? "not configured" : "waiting…";
-    $("ms_power_btn").disabled = true;
+    msApplianceAvailable = false;
+    msCooldownRemaining = 0;
+    syncPowerBtn();
     return;
   }
   const solar = Math.max(0, d.solar_power ?? 0);
@@ -207,9 +231,9 @@ function updateAppliance(d) {
   const work = prettyMs(d.work_status);
   setPill($("ms_pill"), on ? (work || "On") : "Off", on ? "accent" : "");
   msPowerOn = on;
-  const pbtn = $("ms_power_btn");
-  pbtn.classList.toggle("on", on);
-  if (!pbtn.classList.contains("busy")) pbtn.disabled = false;
+  msApplianceAvailable = true;
+  msCooldownRemaining = d.power_cooldown || 0;
+  syncPowerBtn();
 
   // secondary tile: current room temperature + the unit's settings
   $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
@@ -233,23 +257,30 @@ async function loadAppliance() {
 }
 
 async function toggleMsPower() {
-  const btn = $("ms_power_btn");
-  if (btn.disabled) return;
+  if ($("ms_power_btn").disabled) return;
   const target = !msPowerOn;
-  btn.disabled = true;
-  btn.classList.add("busy");
+  msPowerBusy = true;
+  syncPowerBtn();
   try {
     const r = await (await fetch("api/appliance/power", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ on: target }),
     })).json();
-    if (r.ok) { msPowerOn = target; showToast(target ? "Mini-split turned on" : "Mini-split turned off", "ok"); }
-    else showToast(r.error || "Command didn't go through — try again", "err");
+    if (r.ok) {
+      msPowerOn = target;
+      showToast(target ? "Mini-split turned on" : "Mini-split turned off", "ok");
+    } else if (r.cooldown) {
+      msCooldownRemaining = r.retry_after || msCooldownRemaining;
+      showToast(`Locked ${mmss(r.retry_after || 0)} — compressor protection`, "err");
+    } else {
+      showToast(r.error || "Command didn't go through — try again", "err");
+    }
   } catch (e) {
     showToast("Command failed — dashboard unreachable", "err");
   } finally {
-    btn.classList.remove("busy");
+    msPowerBusy = false;
+    syncPowerBtn();
     loadAppliance();
   }
 }
@@ -758,6 +789,7 @@ loadLifetime();
 loadEnergy(activePeriod);
 setInterval(loadCurrent, 5000);
 setInterval(loadAppliance, 5000);
+setInterval(() => { if (msCooldownRemaining > 0) { msCooldownRemaining = Math.max(0, msCooldownRemaining - 1); syncPowerBtn(); } }, 1000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
 setInterval(() => loadBatteryHistory(activeBattWin), 30000);

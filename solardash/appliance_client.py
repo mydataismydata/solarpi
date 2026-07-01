@@ -22,6 +22,7 @@ from . import appliance
 
 DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
+POWER_COOLDOWN_S = 300  # ignore on/off commands for 5 min after a change (protect the compressor)
 
 
 @dataclass
@@ -122,6 +123,7 @@ class AppliancePoller:
         self.status: Optional[appliance.ApplianceStatus] = None
         self.raw_dps: Optional[Dict[str, object]] = None
         self.consecutive_failures = 0
+        self.last_power_change: Optional[int] = None  # epoch of the last on/off change (cooldown anchor)
 
     async def poll_once(self) -> Optional[appliance.ApplianceStatus]:
         reading = await self.client.read()
@@ -133,6 +135,25 @@ class AppliancePoller:
         self.raw_dps = reading.raw_dps
         self.last_ts = int(self.clock())
         return reading.status
+
+    def power_cooldown_remaining(self) -> int:
+        """Seconds left in the post-change lockout (0 = a power command is allowed now).
+        Anti short-cycle: the compressor must not be flipped on/off in quick succession."""
+        if self.last_power_change is None:
+            return 0
+        return max(0, POWER_COOLDOWN_S - (int(self.clock()) - self.last_power_change))
+
+    async def set_power(self, on: bool) -> Dict[str, object]:
+        """Turn the unit on/off, ENFORCED SERVER-SIDE: any command inside the cooldown window is
+        ignored (not sent). On success, stamps the change (starting a fresh cooldown) and re-polls."""
+        remaining = self.power_cooldown_remaining()
+        if remaining > 0:
+            return {"ok": False, "cooldown": True, "retry_after": remaining}
+        ok = await self.client.set_power(on)
+        if ok:
+            self.last_power_change = int(self.clock())
+            await self.poll_once()  # refresh the cached snapshot so the UI reflects the new state
+        return {"ok": ok, "power": on if ok else None, "cooldown": False}
 
     async def run(self, stop_event: Optional[asyncio.Event] = None) -> None:
         while not (stop_event and stop_event.is_set()):

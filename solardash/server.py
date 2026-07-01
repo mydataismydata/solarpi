@@ -198,14 +198,12 @@ async def appliance():
 
 @app.post("/api/appliance/power")
 async def appliance_power(on: bool = Body(..., embed=True)):
-    """Turn the mini-split on/off (writes DP 1) — the dashboard's one read/write control path."""
+    """Turn the mini-split on/off — read/write control path. A 5-minute cooldown between changes
+    is enforced here on the server (anti short-cycle); commands during the lockout are ignored."""
     ap = app.state.appliance_poller
     if ap is None:
         return {"ok": False, "error": "mini-split not configured"}
-    ok = await ap.client.set_power(on)
-    if ok:
-        await ap.poll_once()  # refresh the cached snapshot so the UI reflects the new state at once
-    return {"ok": ok, "power": on if ok else None}
+    return await ap.set_power(on)
 
 
 @app.get("/api/history")
