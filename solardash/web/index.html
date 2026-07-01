@@ -132,7 +132,32 @@
         </div>
       </div>
 
-      <!-- 4. Power flow (top) + Battery bank (below) -->
+      <!-- 4. Mini-split — solar (DC) + grid (AC) drawn together on a two-color dial -->
+      <div class="panel minisplit-panel">
+        <div class="panel-head">
+          <span class="panel-title">Mini-split</span>
+          <span class="pill" id="ms_pill">—</span>
+        </div>
+        <div id="msGauge"></div>
+        <div class="legs">
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#FBBF24"></i>Solar · DC</span>
+            <span class="leg-val"><span id="ms_solar_w">—</span> W</span>
+            <div class="leg-bar"><div id="ms_solar_bar" style="background:#FBBF24"></div></div>
+            <span class="leg-sub" id="ms_solar_sub">— %</span>
+          </div>
+          <div class="leg-div"></div>
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#2DD4BF"></i>Grid · AC</span>
+            <span class="leg-val"><span id="ms_grid_w">—</span> W</span>
+            <div class="leg-bar"><div id="ms_grid_bar" style="background:#2DD4BF"></div></div>
+            <span class="leg-sub" id="ms_grid_sub">— %</span>
+          </div>
+        </div>
+        <div class="ms-climate" id="ms_climate">—</div>
+      </div>
+
+      <!-- 5. Power flow (top) + Battery bank (below) -->
       <div class="col4">
         <div class="panel flow-panel">
           <div class="panel-head"><span class="panel-title">Power flow</span></div>

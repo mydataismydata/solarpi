@@ -19,6 +19,8 @@ const hmJs = (mins) => { mins = Math.max(0, Math.round(mins)); const h = Math.fl
 const pvGauge = new Gauge($("pvGauge"), { id: "pv", max: 4000, unit: "W", sub: "total input", c1: C.accent, c2: C.accent2 });
 const loadGauge = new Gauge($("loadGauge"), { id: "load", max: 4000, unit: "W", sub: "real power · L1+L2", c1: C.load, c2: C.load });
 const acinGauge = new Gauge($("acinGauge"), { id: "acin", max: 4000, unit: "W", sub: "grid / generator", c1: C.acin1, c2: C.acin2 });
+// Mini-split: one dial, two sources drawn at once — solar (amber, DC) + grid (teal, AC).
+const msGauge = new DualGauge($("msGauge"), { id: "ms", max: 3000, unit: "W", sub: "solar + grid", solar: C.pv, grid: C.acin1 });
 renderFlow($("flow"));
 
 let chart = null;
@@ -159,6 +161,66 @@ async function loadBattery() {
     const d = await (await fetch("api/battery", { cache: "no-store" })).json();
     bmsBank = d.available ? d.bank : null;
     renderBatteryDetail($("batteryDetail"), d);
+  } catch (e) { /* leave previous render */ }
+}
+
+// ---- mini-split (appliance) -----------------------------------------------
+
+const MS_MODE = { cold: "Cool", cool: "Cool", hot: "Heat", heat: "Heat", wind: "Fan", fan: "Fan", fan_only: "Fan", wet: "Dry", dry: "Dry", auto: "Auto" };
+// Prettify a raw Tuya enum ("fan_only" -> "Fan only", "cooling" -> "Cooling").
+const prettyMs = (s) => (!s ? "" : String(s).split(/[_\s]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(" "));
+const msMode = (m) => MS_MODE[String(m || "").toLowerCase()] || prettyMs(m);
+
+const MS_MAX = 3000; // dial + leg-bar scale (watts) for the mini-split's total draw
+
+function updateAppliance(d) {
+  if (!d || !d.available) {
+    setPill($("ms_pill"), "Off", "");
+    msGauge.set(0, 0);
+    msGauge.setSub("solar + grid");
+    for (const s of ["solar", "grid"]) {
+      $("ms_" + s + "_w").textContent = "—";
+      $("ms_" + s + "_bar").style.width = "0%";
+      $("ms_" + s + "_sub").textContent = "—";
+    }
+    $("ms_climate").textContent = d ? "Not configured on the Pi" : "waiting…";
+    return;
+  }
+  const solar = Math.max(0, d.solar_power ?? 0);
+  const grid = Math.max(0, d.grid_power ?? 0);
+  const total = solar + grid;
+  msGauge.set(solar, grid);
+  const sPct = d.solar_percent ?? (total > 0 ? Math.round((solar / total) * 100) : 0);
+  const gPct = d.grid_percent ?? (total > 0 ? 100 - sPct : 0);
+  msGauge.setSub(total > 0 ? `${sPct}% solar` : "idle");
+
+  $("ms_solar_w").textContent = fmt(solar, 0);
+  $("ms_grid_w").textContent = fmt(grid, 0);
+  $("ms_solar_bar").style.width = clampPct(solar, MS_MAX) + "%";
+  $("ms_grid_bar").style.width = clampPct(grid, MS_MAX) + "%";
+  $("ms_solar_sub").textContent = total > 0 ? `${sPct}%` : "—";
+  $("ms_grid_sub").textContent = total > 0 ? `${gPct}%` : "—";
+
+  const on = d.power === true;
+  const work = prettyMs(d.work_status);
+  setPill($("ms_pill"), on ? (work || "On") : "Off", on ? "accent" : "");
+
+  if (!on) {
+    $("ms_climate").textContent = "Off";
+  } else {
+    const set = d.temp_set_c != null ? `${Math.round(d.temp_set_c)}°C` : "—";
+    const bits = [`${tempCF(d.temp_current_c)} → ${set}`];
+    const mode = msMode(d.mode);
+    if (mode) bits.push(mode);
+    if (d.fan_speed) bits.push(`Fan ${prettyMs(d.fan_speed)}`);
+    if (d.fault_labels && d.fault_labels.length) bits.push(`⚠ ${d.fault_labels.map(prettyMs).join(", ")}`);
+    $("ms_climate").textContent = bits.join(" · ");
+  }
+}
+
+async function loadAppliance() {
+  try {
+    updateAppliance(await (await fetch("api/appliance", { cache: "no-store" })).json());
   } catch (e) { /* leave previous render */ }
 }
 
@@ -656,6 +718,7 @@ $("snapBtn").addEventListener("click", takeSnapshot);
 initSettings();
 initUnitToggles();
 loadBattery();
+loadAppliance();
 loadCurrent();
 loadHistory(activeWin);
 loadBatteryHistory(activeBattWin);
@@ -663,6 +726,7 @@ loadToday();
 loadLifetime();
 loadEnergy(activePeriod);
 setInterval(loadCurrent, 5000);
+setInterval(loadAppliance, 5000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
 setInterval(() => loadBatteryHistory(activeBattWin), 30000);

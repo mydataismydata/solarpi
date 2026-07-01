@@ -87,6 +87,59 @@ class Gauge {
   }
 }
 
+/* Dual-source gauge — two fill arcs stacked on one 270° track for a device drawing from two
+   sources at once (the mini-split's solar DC + grid AC). A "total" arc (solar+grid) is drawn in
+   the grid color, then the solar portion is painted on top in the solar color, so [0..solar]
+   reads as solar and [solar..total] as grid. Both arcs animate via stroke-dashoffset like Gauge. */
+class DualGauge {
+  constructor(el, opts) {
+    this.el = el;
+    this.max = opts.max || 1;
+    this.solarColor = opts.solar;
+    this.gridColor = opts.grid;
+    const track = arcPath(GA.CX, GA.CY, GA.R, GA.START, GA.START + GA.SWEEP);
+    const [tipX, tipY] = polar(GA.CX, GA.CY, GA.R, 0);
+    el.classList.add("gauge");
+    el.innerHTML =
+      `<svg viewBox="0 0 200 200" class="g-svg">
+         <g class="g-ticks">${ticksSvg()}</g>
+         <path class="g-track" d="${track}"/>
+         <path class="g-fill g-fill-total" d="${track}" pathLength="1000" stroke="${opts.grid}" style="stroke-dashoffset:1000"/>
+         <path class="g-fill g-fill-solar" d="${track}" pathLength="1000" stroke="${opts.solar}" style="stroke-dashoffset:1000"/>
+         <g class="g-tiprot" transform="rotate(${GA.START} ${GA.CX} ${GA.CY})">
+           <circle class="g-tip" cx="${tipX.toFixed(2)}" cy="${tipY.toFixed(2)}" r="8" style="stroke:${opts.grid}"/>
+         </g>
+       </svg>
+       <div class="gauge-center">
+         <div class="g-val"><span class="g-num">—</span><small>${opts.unit}</small></div>
+         <div class="g-sub">${opts.sub}</div>
+       </div>`;
+    this.fillTotal = el.querySelector(".g-fill-total"); // grid color, spans 0..total
+    this.fillSolar = el.querySelector(".g-fill-solar"); // solar color, spans 0..solar, painted on top
+    this.tip = el.querySelector(".g-tiprot");
+    this.tipDot = el.querySelector(".g-tip");
+    this.num = el.querySelector(".g-num");
+    this.subEl = el.querySelector(".g-sub");
+  }
+
+  // solar + grid in the gauge's unit (watts). Total = solar+grid fills the arc; solar drawn on top.
+  set(solar, grid) {
+    const s = Math.max(0, Number(solar) || 0);
+    const g = Math.max(0, Number(grid) || 0);
+    const total = s + g;
+    const tFrac = Math.max(0, Math.min(1, total / (this.max || 1)));
+    const sFrac = Math.max(0, Math.min(1, s / (this.max || 1)));
+    this.fillTotal.style.strokeDashoffset = String(1000 * (1 - tFrac));
+    this.fillSolar.style.strokeDashoffset = String(1000 * (1 - sFrac));
+    const ang = GA.START + GA.SWEEP * tFrac;
+    this.tip.setAttribute("transform", `rotate(${ang.toFixed(2)} ${GA.CX} ${GA.CY})`);
+    this.tipDot.style.stroke = g > 0 ? this.gridColor : this.solarColor; // tint by the source at the tip
+    this.num.textContent = Math.round(total).toLocaleString();
+  }
+
+  setSub(text) { if (this.subEl) this.subEl.textContent = text; }
+}
+
 /* Segmented state-of-charge bar — port of SocBar (ui/SolarComponents.kt): a rounded pill
    with a colored fill and 20 segment dividers, animated on width. */
 function setSocBar(fillEl, pct, color) {
