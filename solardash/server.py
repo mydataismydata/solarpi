@@ -17,6 +17,7 @@ from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 
 from . import api, cli
+from .appliance_client import ApplianceClient, AppliancePoller
 from .bms_poller import BmsPoller
 from .client import InverterClient
 from .config import Config
@@ -82,6 +83,21 @@ async def lifespan(app: FastAPI):
         bms_poller = BmsPoller(cfg.bms_addresses, interval_s=cfg.bms_interval_s, positions=cfg.bms_positions)
         bms_task = asyncio.create_task(bms_poller.run(bms_stop))
 
+    # Mini-split appliance (EG4/Deye over Wi-Fi, Tuya local v3.3). Off unless fully configured.
+    appliance_poller = None
+    appliance_task = None
+    appliance_stop = asyncio.Event()
+    if cfg.appliance_enabled and cfg.appliance_ip and cfg.appliance_device_id and cfg.appliance_local_key:
+        appliance_client = ApplianceClient(
+            cfg.appliance_ip,
+            cfg.appliance_device_id,
+            cfg.appliance_local_key,
+            version=cfg.appliance_version,
+            temp_divisor=cfg.appliance_temp_divisor,
+        )
+        appliance_poller = AppliancePoller(appliance_client, interval_s=cfg.appliance_interval_s)
+        appliance_task = asyncio.create_task(appliance_poller.run(appliance_stop))
+
     # Advertise over mDNS so the Android app finds us. The serve port comes from uvicorn, not Config,
     # so read it from SOLAR_HTTP_PORT (default 8000) — set it if you serve on a different port.
     http_port = int(os.environ.get("SOLAR_HTTP_PORT", "8000"))
@@ -92,6 +108,7 @@ async def lifespan(app: FastAPI):
     app.state.cfg = cfg
     app.state.poller = poller
     app.state.bms_poller = bms_poller
+    app.state.appliance_poller = appliance_poller
     try:
         yield
     finally:
@@ -107,7 +124,10 @@ async def lifespan(app: FastAPI):
         if bms_task:
             bms_stop.set()
             bms_task.cancel()
-        for t in (task, bms_task):
+        if appliance_task:
+            appliance_stop.set()
+            appliance_task.cancel()
+        for t in (task, bms_task, appliance_task):
             if t:
                 try:
                     await t
@@ -171,6 +191,11 @@ async def snapshot():
     return {"ok": True, "filename": filename, "path": path, "dir": cli.EXPORT_DIR}
 
 
+@app.get("/api/appliance")
+async def appliance():
+    return api.appliance_payload(app.state.appliance_poller)
+
+
 @app.get("/api/history")
 async def history(
     fields: Optional[str] = Query(None, description="comma-separated field names"),
@@ -202,6 +227,7 @@ async def health():
     cfg = app.state.cfg
     poller = app.state.poller
     bp = app.state.bms_poller
+    ap = app.state.appliance_poller
     return {
         "ok": True,
         "samples": app.state.store.count(),
@@ -214,6 +240,11 @@ async def health():
             "packs": bp.bank.packs if (bp and bp.bank) else 0,
             "last_ts": bp.last_ts if bp else None,
             "failures": bp.consecutive_failures if bp else None,
+        },
+        "appliance": {
+            "enabled": cfg.appliance_enabled,
+            "last_ts": ap.last_ts if ap else None,
+            "failures": ap.consecutive_failures if ap else None,
         },
     }
 

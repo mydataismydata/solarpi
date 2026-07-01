@@ -69,6 +69,16 @@ class Config:
     bms_interval_s: float = 60.0
     bms_addresses: List[Tuple[str, str]] = field(default_factory=lambda: list(DEFAULT_BMS_ADDRESSES))
     bms_positions: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_BMS_POSITIONS))
+    # Mini-split appliance (EG4/Deye hybrid) over Wi-Fi — Tuya local protocol v3.3, read-only.
+    # Disabled until you give it the device's LAN IP, device id, and 16-char local key (extract
+    # once with `tinytuya wizard` — see README). Needs the `tinytuya` package (lazy-imported).
+    appliance_enabled: bool = False
+    appliance_ip: str = ""
+    appliance_device_id: str = ""
+    appliance_local_key: str = ""
+    appliance_version: float = 3.3
+    appliance_interval_s: float = 30.0   # gentle: this Wi-Fi module is flaky on the LAN
+    appliance_temp_divisor: float = 1.0  # set 10 if a live status() shows temps in tenths of a degree
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -92,4 +102,11 @@ class Config:
                 if os.environ.get("SOLAR_BMS_POSITIONS")
                 else dict(DEFAULT_BMS_POSITIONS)
             ),
+            appliance_enabled=os.environ.get("SOLAR_APPLIANCE_ENABLED", "0") not in ("0", "false", "False"),
+            appliance_ip=os.environ.get("SOLAR_APPLIANCE_IP", cls.appliance_ip),
+            appliance_device_id=os.environ.get("SOLAR_APPLIANCE_DEVICE_ID", cls.appliance_device_id),
+            appliance_local_key=os.environ.get("SOLAR_APPLIANCE_LOCAL_KEY", cls.appliance_local_key),
+            appliance_version=float(os.environ.get("SOLAR_APPLIANCE_VERSION", cls.appliance_version)),
+            appliance_interval_s=float(os.environ.get("SOLAR_APPLIANCE_INTERVAL", cls.appliance_interval_s)),
+            appliance_temp_divisor=float(os.environ.get("SOLAR_APPLIANCE_TEMP_DIVISOR", cls.appliance_temp_divisor)),
         )

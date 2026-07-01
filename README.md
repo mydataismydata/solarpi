@@ -216,6 +216,7 @@ scp '<piuser>@100.x.y.z:~/solardash/exports/*' ~/Downloads/
 |--------|-----------|--------|
 | SRNE/Eco-Worthy inverter | TCP 8899 (Solarman V5 + Modbus-RTU) | **live** |
 | JBD BMS (per-cell battery) | BLE (svc 0xFF00 / notify 0xFF01) | **live** |
+| EG4/Deye mini-split | Wi-Fi (Tuya local v3.3, TCP 6668) | **live** (read-only) |
 
 The inverter also reports battery SOC / voltage / current / temp, so the inverter feed alone covers the core picture; BLE adds per-cell granularity.
 
@@ -228,6 +229,8 @@ solardash/
   client.py     async TCP poller for the Solarman dongle
   jbd.py        JBD BMS frame parser (0x03 basic info + 0x04 cells)
   bms_client.py / bms_poller.py   BLE poller for the battery packs
+  appliance.py  EG4/Deye mini-split Tuya datapoint decode (pure)
+  appliance_client.py   read-only tinytuya client + poller for the mini-split
   db.py         SQLite time-series store
   poller.py     periodic poll -> store loop
   api.py        JSON payload builders (unit-tested)
@@ -438,6 +441,57 @@ Pi to `git pull` and restart the service:
 
 It needs passwordless (key-based) SSH to the Pi — the same key you can paste during
 imaging in step 1.
+
+## Mini-split appliance (EG4 / Deye, over Wi-Fi)
+
+The EG4 24K BTU Hybrid Solar Mini-Split (AC/DC, R32) is a rebadged **Deye** unit and a **Tuya**
+Wi-Fi device — its "Solar Aircon" app is a Smart Life reskin. The dashboard reads it **locally and
+read-only** over the Tuya local protocol (v3.3, TCP 6668), with no cloud round-trip, and serves the
+result at `GET /api/appliance` for the app's Appliances tab. Its Bluetooth is only used for Wi-Fi
+onboarding, so there's no telemetry there — everything rides Wi-Fi. The interesting part is DPs
+106–111: the **PV vs. grid power split and energy totals** the unit measures internally, which the
+Tuya *cloud* API hides and you can only get on the LAN.
+
+This needs `tinytuya` on the Pi:
+
+```
+.venv/bin/pip install tinytuya
+```
+
+### One-time: get the device's local key
+
+Local reads are AES-encrypted with the device's 16-char **local key**. Extract it once:
+
+1. Pair the mini-split in the **Smart Life** (or Solar Aircon) app so it's on your Wi-Fi.
+2. Create a free **Tuya IoT Platform** developer account, then run the wizard, which links your
+   app account and prints each device's id + local key (and dumps a live datapoint snapshot):
+
+   ```
+   python -m tinytuya wizard
+   ```
+
+   `python -m tinytuya scan` will also find the unit's LAN IP. The live snapshot is the moment to
+   **confirm the datapoint scale** — if the temperatures read like `240`/`235` instead of `24`/`23`,
+   set `SOLAR_APPLIANCE_TEMP_DIVISOR=10` below. (See `solardash/appliance.py` for the full DP map.)
+
+### Configure
+
+Add to `~/solardash/solardash.env` and restart the service:
+
+```ini
+SOLAR_APPLIANCE_ENABLED=1
+SOLAR_APPLIANCE_IP=192.168.#.#            # the mini-split's LAN IP (from tinytuya scan)
+SOLAR_APPLIANCE_DEVICE_ID=xxxxxxxxxxxxxxxxxxxx
+SOLAR_APPLIANCE_LOCAL_KEY=xxxxxxxxxxxxxxxx  # 16 chars, from the wizard
+# Optional:
+SOLAR_APPLIANCE_VERSION=3.3               # protocol version (3.3 for this unit)
+SOLAR_APPLIANCE_INTERVAL=30               # seconds; gentle — this module is flaky on the LAN
+SOLAR_APPLIANCE_TEMP_DIVISOR=1            # set 10 if the live snapshot shows temps in tenths
+```
+
+Check it with `curl -s http://solarpi.local:8000/api/appliance` — `available: true` plus the
+decoded fields (and a `raw_dps` block) means the app's Appliances tab will light up. The dashboard
+runs fine with this left disabled; the import of `tinytuya` is lazy.
 
 ## Android app integration (mDNS)
 

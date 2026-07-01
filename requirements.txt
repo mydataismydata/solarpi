@@ -9,6 +9,11 @@ zeroconf>=0.131
 # Phase 2b — battery over BLE (added when we wire up the JBD BMS)
 # bleak>=0.21
 
+# Phase 3 — mini-split appliance over Wi-Fi (EG4/Deye, Tuya local v3.3). Optional:
+# imported lazily and only touched when SOLAR_APPLIANCE_ENABLED=1, so the dashboard
+# runs without it. Install on the Pi when enabling the mini-split: pip install tinytuya
+# tinytuya>=1.13
+
 # Dev / test
 # pytest>=8.0
 #

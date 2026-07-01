@@ -182,3 +182,34 @@ def battery_payload(poller) -> Dict[str, object]:
         },
         "packs": packs,
     }
+
+
+def appliance_payload(poller) -> Dict[str, object]:
+    """Latest mini-split snapshot: power, climate, and the solar/grid power+energy split.
+
+    `raw_dps` carries the unmapped Tuya datapoints too, for debugging an unfamiliar firmware
+    over `curl` without a code change.
+    """
+    if poller is None or getattr(poller, "status", None) is None:
+        return {"available": False}
+    s = poller.status
+    return {
+        "available": True,
+        "ts": poller.last_ts,
+        "power": s.power,
+        "mode": s.mode,
+        "work_status": s.work_status,
+        "fan_speed": s.fan_speed,
+        "temp_set_c": s.temp_set_c,
+        "temp_current_c": s.temp_current_c,
+        "temp_set_f": s.temp_set_f,
+        "temp_current_f": s.temp_current_f,
+        "fault_labels": s.fault_labels,
+        "solar_power": s.solar_power,
+        "grid_power": s.grid_power,
+        "solar_energy": s.solar_energy,
+        "total_energy": s.total_energy,
+        "solar_percent": s.solar_percent,
+        "grid_percent": s.grid_percent,
+        "raw_dps": poller.raw_dps,
+    }
