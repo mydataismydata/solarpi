@@ -206,6 +206,15 @@ async def appliance_power(on: bool = Body(..., embed=True)):
     return await ap.set_power(on)
 
 
+@app.post("/api/appliance/mode")
+async def appliance_mode(mode: str = Body(..., embed=True)):
+    """Set the mini-split's mode (cold/hot/wet/auto/wind) — writes DP 4."""
+    ap = app.state.appliance_poller
+    if ap is None:
+        return {"ok": False, "error": "mini-split not configured"}
+    return await ap.set_mode(mode)
+
+
 @app.get("/api/history")
 async def history(
     fields: Optional[str] = Query(None, description="comma-separated field names"),

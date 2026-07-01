@@ -23,6 +23,7 @@ from . import appliance
 DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
 POWER_COOLDOWN_S = 300  # ignore on/off commands for 5 min after a change (protect the compressor)
+APPLIANCE_MODES = ("auto", "cold", "hot", "wind", "wet")  # DP 4 enum (cold=cool, hot=heat, wet=dry)
 
 
 @dataclass
@@ -154,6 +155,15 @@ class AppliancePoller:
             self.last_power_change = int(self.clock())
             await self.poll_once()  # refresh the cached snapshot so the UI reflects the new state
         return {"ok": ok, "power": on if ok else None, "cooldown": False}
+
+    async def set_mode(self, mode: str) -> Dict[str, object]:
+        """Set the operating mode (writes DP 4). No cooldown — the compressor guard is power-only."""
+        if mode not in APPLIANCE_MODES:
+            return {"ok": False, "error": "unknown mode %r" % (mode,)}
+        ok = await self.client.set_dp(4, mode)
+        if ok:
+            await self.poll_once()
+        return {"ok": ok, "mode": mode if ok else None}
 
     async def run(self, stop_event: Optional[asyncio.Event] = None) -> None:
         while not (stop_event and stop_event.is_set()):

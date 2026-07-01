@@ -35,6 +35,7 @@ let msPowerOn = false;        // latest mini-split on/off state
 let msCooldownRemaining = 0;  // seconds left in the server-enforced power lockout
 let msPowerBusy = false;      // a power command is in flight
 let msApplianceAvailable = false;
+let msModeBusy = false;       // a mode change is in flight
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -210,6 +211,7 @@ function updateAppliance(d) {
     msApplianceAvailable = false;
     msCooldownRemaining = 0;
     syncPowerBtn();
+    $("ms_modes").querySelectorAll("button").forEach((b) => { b.classList.remove("active"); b.disabled = true; });
     return;
   }
   const solar = Math.max(0, d.solar_power ?? 0);
@@ -234,6 +236,10 @@ function updateAppliance(d) {
   msApplianceAvailable = true;
   msCooldownRemaining = d.power_cooldown || 0;
   syncPowerBtn();
+  $("ms_modes").querySelectorAll("button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === d.mode);
+    b.disabled = msModeBusy;
+  });
 
   // secondary tile: current room temperature + the unit's settings
   $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
@@ -281,6 +287,26 @@ async function toggleMsPower() {
   } finally {
     msPowerBusy = false;
     syncPowerBtn();
+    loadAppliance();
+  }
+}
+
+async function setMsMode(mode) {
+  if (msModeBusy) return;
+  msModeBusy = true;
+  $("ms_modes").querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try {
+    const r = await (await fetch("api/appliance/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    })).json();
+    if (r.ok) showToast(`Mode set to ${msMode(mode)}`, "ok");
+    else showToast(r.error || "Mode change didn't go through — try again", "err");
+  } catch (e) {
+    showToast("Command failed — dashboard unreachable", "err");
+  } finally {
+    msModeBusy = false;
     loadAppliance();
   }
 }
@@ -777,6 +803,7 @@ initEbarPopup($("ebars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
 $("ms_power_btn").addEventListener("click", toggleMsPower);
+$("ms_modes").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) setMsMode(b.dataset.mode); });
 initSettings();
 initUnitToggles();
 loadBattery();
