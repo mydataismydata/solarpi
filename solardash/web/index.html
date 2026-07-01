@@ -136,7 +136,12 @@
       <div class="panel minisplit-panel">
         <div class="panel-head">
           <span class="panel-title">Mini-split</span>
-          <span class="pill" id="ms_pill">—</span>
+          <div class="head-tools">
+            <span class="pill" id="ms_pill">—</span>
+            <button class="ms-power" id="ms_power_btn" disabled aria-label="Toggle mini-split power" title="Turn the mini-split on/off">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+            </button>
+          </div>
         </div>
         <div id="msGauge"></div>
         <div class="legs">

@@ -49,17 +49,21 @@ class ApplianceClient:
         self.temp_divisor = temp_divisor
         self.timeout = timeout
         self._device = None  # created lazily in a worker thread
+        self._lock = asyncio.Lock()  # serialize the poll read and control writes on the one socket
+
+    def _ensure_device(self):
+        if self._device is None:
+            import tinytuya  # lazy: only needed when appliance support is enabled
+
+            dev = tinytuya.Device(self.device_id, self.ip, self.local_key, version=self.version)
+            dev.set_socketTimeout(self.timeout)
+            self._device = dev
+        return self._device
 
     def _read_sync(self) -> Optional[Dict[str, object]]:
         """Blocking read of the device's datapoints. Returns the dps dict, or None on failure."""
         try:
-            if self._device is None:
-                import tinytuya  # lazy: only needed when appliance polling is enabled
-
-                dev = tinytuya.Device(self.device_id, self.ip, self.local_key, version=self.version)
-                dev.set_socketTimeout(self.timeout)
-                self._device = dev
-            data = self._device.status()
+            data = self._ensure_device().status()
         except Exception:
             self._device = None  # force a clean reconnect next cycle
             return None
@@ -69,15 +73,37 @@ class ApplianceClient:
             return None
         return data["dps"]
 
+    def _set_sync(self, dp, value) -> bool:
+        """Blocking write of a single datapoint. Returns True on success."""
+        try:
+            res = self._ensure_device().set_value(dp, value)
+        except Exception:
+            self._device = None
+            return False
+        if isinstance(res, dict) and res.get("Error"):
+            self._device = None
+            return False
+        return True
+
     async def read(self) -> Optional[ApplianceReading]:
         # tinytuya's status() is blocking; run it off the event loop. run_in_executor (not
         # asyncio.to_thread) keeps this working on Python 3.7/3.8 too.
         loop = asyncio.get_running_loop()
-        dps = await loop.run_in_executor(None, self._read_sync)
+        async with self._lock:
+            dps = await loop.run_in_executor(None, self._read_sync)
         if not dps:
             return None
         status = appliance.decode(dps, temp_divisor=self.temp_divisor)
         return ApplianceReading(status, dps)
+
+    async def set_dp(self, dp, value) -> bool:
+        """Write one datapoint — the only place the app controls the unit (read/write path)."""
+        loop = asyncio.get_running_loop()
+        async with self._lock:
+            return await loop.run_in_executor(None, self._set_sync, dp, value)
+
+    async def set_power(self, on: bool) -> bool:
+        return await self.set_dp(1, bool(on))  # DP 1 = on/off switch
 
 
 class AppliancePoller:

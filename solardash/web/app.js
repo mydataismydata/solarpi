@@ -31,6 +31,7 @@ let activePeriod = "hour";
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
 let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
 let lastCurrent = null; // last /api/current payload, so the W/A toggle can re-render instantly
+let msPowerOn = false;  // latest mini-split on/off state, for the power toggle button
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -184,6 +185,7 @@ function updateAppliance(d) {
     }
     $("ms_tile_temp").textContent = "—";
     $("ms_tile_sub").textContent = d ? "not configured" : "waiting…";
+    $("ms_power_btn").disabled = true;
     return;
   }
   const solar = Math.max(0, d.solar_power ?? 0);
@@ -204,6 +206,10 @@ function updateAppliance(d) {
   const on = d.power === true;
   const work = prettyMs(d.work_status);
   setPill($("ms_pill"), on ? (work || "On") : "Off", on ? "accent" : "");
+  msPowerOn = on;
+  const pbtn = $("ms_power_btn");
+  pbtn.classList.toggle("on", on);
+  if (!pbtn.classList.contains("busy")) pbtn.disabled = false;
 
   // secondary tile: current room temperature + the unit's settings
   $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
@@ -224,6 +230,28 @@ async function loadAppliance() {
   try {
     updateAppliance(await (await fetch("api/appliance", { cache: "no-store" })).json());
   } catch (e) { /* leave previous render */ }
+}
+
+async function toggleMsPower() {
+  const btn = $("ms_power_btn");
+  if (btn.disabled) return;
+  const target = !msPowerOn;
+  btn.disabled = true;
+  btn.classList.add("busy");
+  try {
+    const r = await (await fetch("api/appliance/power", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: target }),
+    })).json();
+    if (r.ok) { msPowerOn = target; showToast(target ? "Mini-split turned on" : "Mini-split turned off", "ok"); }
+    else showToast(r.error || "Command didn't go through — try again", "err");
+  } catch (e) {
+    showToast("Command failed — dashboard unreachable", "err");
+  } finally {
+    btn.classList.remove("busy");
+    loadAppliance();
+  }
 }
 
 // ---- history chart --------------------------------------------------------
@@ -717,6 +745,7 @@ initERanges();
 initEbarPopup($("ebars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
+$("ms_power_btn").addEventListener("click", toggleMsPower);
 initSettings();
 initUnitToggles();
 loadBattery();

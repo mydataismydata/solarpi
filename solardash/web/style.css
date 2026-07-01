@@ -101,6 +101,14 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .pill.accent { color: var(--accent); background: rgba(34,211,238,0.12); }
 .pill.red { color: var(--fault); background: rgba(248,113,113,0.12); }
 
+/* mini-split power toggle (control) */
+.ms-power { background: transparent; border: 1px solid var(--line); color: var(--txt3); cursor: pointer; padding: 4px; display: flex; border-radius: 8px; }
+.ms-power:hover:not(:disabled) { color: var(--txt); border-color: var(--line-strong); }
+.ms-power.on { color: var(--charge); border-color: var(--charge); }
+.ms-power:disabled { opacity: 0.4; cursor: default; }
+.ms-power.busy { animation: snap-pulse 0.9s ease-in-out infinite; }
+.ms-power svg { width: 16px; height: 16px; display: block; }
+
 /* ---- radial gauge ---- */
 .gauge { position: relative; width: 100%; max-width: 230px; margin: 6px auto 2px; aspect-ratio: 1 / 1; }
 .g-svg { width: 100%; height: 100%; display: block; overflow: visible; }

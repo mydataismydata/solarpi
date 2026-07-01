@@ -13,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 
 from . import api, cli
@@ -194,6 +194,18 @@ async def snapshot():
 @app.get("/api/appliance")
 async def appliance():
     return api.appliance_payload(app.state.appliance_poller)
+
+
+@app.post("/api/appliance/power")
+async def appliance_power(on: bool = Body(..., embed=True)):
+    """Turn the mini-split on/off (writes DP 1) — the dashboard's one read/write control path."""
+    ap = app.state.appliance_poller
+    if ap is None:
+        return {"ok": False, "error": "mini-split not configured"}
+    ok = await ap.client.set_power(on)
+    if ok:
+        await ap.poll_once()  # refresh the cached snapshot so the UI reflects the new state at once
+    return {"ok": ok, "power": on if ok else None}
 
 
 @app.get("/api/history")
