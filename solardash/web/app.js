@@ -124,18 +124,17 @@ function updateTiles(d) {
   // Secondary tiles — temps in both °C and °F
   $("dc_temp").textContent = tempCF(d.dc_temp);
   $("temp_sub").textContent = `AC ${tempCF(d.ac_temp)} · batt ${tempCF(battTemp)}`;
-  $("machine_state").textContent = d.machine_state ?? "—";
-
+  const state = d.machine_state ?? "—";
   const tile = $("fault_tile");
   if (d.faults && d.faults.length) {
     tile.classList.add("has-fault");
     $("fault_value").textContent = `${d.faults.length} FAULT${d.faults.length > 1 ? "S" : ""}`;
-    $("fault_sub").textContent = d.faults.map((f) => `F${String(f.code).padStart(2, "0")} ${f.text}`).join(" · ");
+    $("fault_sub").textContent = `State ${state} · ` + d.faults.map((f) => `F${String(f.code).padStart(2, "0")} ${f.text}`).join(" · ");
   } else {
     tile.classList.remove("has-fault");
     $("fault_value").textContent = "OK";
     $("fault_value").className = "tile-value ok";
-    $("fault_sub").textContent = "No active faults";
+    $("fault_sub").textContent = `Machine state ${state} · no active faults`;
   }
 
   // freshness
@@ -183,7 +182,8 @@ function updateAppliance(d) {
       $("ms_" + s + "_bar").style.width = "0%";
       $("ms_" + s + "_sub").textContent = "—";
     }
-    $("ms_climate").textContent = d ? "Not configured on the Pi" : "waiting…";
+    $("ms_tile_temp").textContent = "—";
+    $("ms_tile_sub").textContent = d ? "not configured" : "waiting…";
     return;
   }
   const solar = Math.max(0, d.solar_power ?? 0);
@@ -205,16 +205,18 @@ function updateAppliance(d) {
   const work = prettyMs(d.work_status);
   setPill($("ms_pill"), on ? (work || "On") : "Off", on ? "accent" : "");
 
-  if (!on) {
-    $("ms_climate").textContent = "Off";
-  } else {
+  // secondary tile: current room temperature + the unit's settings
+  $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
+  if (on) {
     const set = d.temp_set_c != null ? `${Math.round(d.temp_set_c)}°C` : "—";
-    const bits = [`${tempCF(d.temp_current_c)} → ${set}`];
+    const bits = [`set ${set}`];
     const mode = msMode(d.mode);
     if (mode) bits.push(mode);
     if (d.fan_speed) bits.push(`Fan ${prettyMs(d.fan_speed)}`);
     if (d.fault_labels && d.fault_labels.length) bits.push(`⚠ ${d.fault_labels.map(prettyMs).join(", ")}`);
-    $("ms_climate").textContent = bits.join(" · ");
+    $("ms_tile_sub").textContent = bits.join(" · ");
+  } else {
+    $("ms_tile_sub").textContent = "Off";
   }
 }
 
