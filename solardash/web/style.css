@@ -113,10 +113,15 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 
 /* mini-split mode selector — a pill dropdown in the temperature tile (Dry / Cold / Heat) */
 .tile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.mode-select { position: relative; }
+.mode-select { position: relative; display: inline-flex; align-items: center; gap: 6px; }
 .mode-pill { display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; font-weight: 600; padding: 3px 6px 3px 10px; border-radius: 999px; border: none; background: var(--surface2); color: var(--txt2); white-space: nowrap; cursor: pointer; font-family: var(--sans); }
 .mode-pill:hover:not(:disabled) { color: var(--txt); }
 .mode-pill:disabled { opacity: 0.5; cursor: default; }
+.mode-pill.pending { outline: 1px dashed currentColor; outline-offset: 1px; }
+.mode-apply { font-size: 11.5px; font-weight: 700; padding: 3px 11px; border-radius: 999px; border: none; background: var(--accent); color: var(--bg); white-space: nowrap; cursor: pointer; font-family: var(--sans); }
+.mode-apply:hover:not(:disabled) { filter: brightness(1.08); }
+.mode-apply:disabled { opacity: 0.5; cursor: default; }
+.mode-apply[hidden] { display: none; }
 .mode-pill svg { width: 13px; height: 13px; opacity: 0.7; transition: transform 0.15s ease; }
 .mode-pill.cold { color: var(--accent); background: rgba(34,211,238,0.12); }
 .mode-pill.hot { color: var(--discharge); background: rgba(251,191,36,0.12); }

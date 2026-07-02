@@ -37,6 +37,7 @@ let msPowerBusy = false;      // a power command is in flight
 let msApplianceAvailable = false;
 let msModeBusy = false;       // a mode change is in flight
 let msCurrentMode = null;     // the unit's current mode (for the heat<->cool gate)
+let msPendingMode = null;     // a mode the user picked but hasn't applied yet (shows an Apply button)
 let msModeCooldownRemaining = 0; // seconds left in the cool/dry<->heat lockout
 
 function setPill(el, text, tone) {
@@ -201,24 +202,33 @@ function syncPowerBtn() {
 
 const isCooling = (m) => m === "cold" || m === "wet";
 
-// Render the mode control: the pill shows the current/pending mode (even when the unit is off, so
-// you can pre-set what it'll run when next turned on), the menu highlights it, and during the
-// reverse-gate we disable ONLY the options that cross the heat/cool boundary (cool/dry <-> heat);
-// cool<->dry stays free.
+// Render the mode control. Picking a mode only stages it (msPendingMode); the pill then shows the
+// pending choice with a dashed ring and an Apply button appears — nothing is sent until Apply. The
+// pill shows the mode even when the unit is off, so you can pre-set what it'll run when next turned
+// on. During the reverse-gate we disable ONLY the options that cross the heat/cool boundary
+// (cool/dry <-> heat) relative to the unit's actual mode; cool<->dry stays free.
 function renderModes() {
-  const m = msCurrentMode ? String(msCurrentMode).toLowerCase() : null;
+  const cur = msCurrentMode ? String(msCurrentMode).toLowerCase() : null;
+  const pend = msPendingMode ? String(msPendingMode).toLowerCase() : null;
+  const sel = pend || cur;                 // what the control currently shows
+  const dirty = !!pend && pend !== cur;    // a staged change waiting to be applied
+
   const btn = $("ms_mode_btn");
-  $("ms_mode_label").textContent = msApplianceAvailable ? msModeLabel(m) : "—";
-  const tone = (m === "cold" || m === "hot" || m === "wet") ? m : "";
-  btn.className = "mode-pill" + (tone ? " " + tone : "");
+  $("ms_mode_label").textContent = msApplianceAvailable ? msModeLabel(sel) : "—";
+  const tone = (sel === "cold" || sel === "hot" || sel === "wet") ? sel : "";
+  btn.className = "mode-pill" + (tone ? " " + tone : "") + (dirty ? " pending" : "");
   btn.disabled = !msApplianceAvailable;
+
+  const apply = $("ms_mode_apply");
+  apply.hidden = !(dirty && msApplianceAvailable);
+  apply.disabled = msModeBusy;
 
   const locked = msModeCooldownRemaining > 0;
   $("ms_mode_menu").querySelectorAll("button").forEach((b) => {
     const bm = b.dataset.mode;
-    b.classList.toggle("active", bm === m);
-    const crosses = locked && m &&
-      ((isCooling(m) && bm === "hot") || (m === "hot" && isCooling(bm)));
+    b.classList.toggle("active", bm === sel);
+    const crosses = locked && cur &&
+      ((isCooling(cur) && bm === "hot") || (cur === "hot" && isCooling(bm)));
     b.disabled = !msApplianceAvailable || msModeBusy || crosses;
     b.title = crosses ? `Heat/cool switch locked ${mmss(msModeCooldownRemaining)} — compressor protection` : "";
   });
@@ -238,6 +248,19 @@ function toggleModeMenu() {
   $("ms_mode_btn").setAttribute("aria-expanded", String(opening));
 }
 
+// Stage a mode (don't send it). Picking the mode the unit is already in clears the pending change.
+function selectMode(mode) {
+  const cur = msCurrentMode ? String(msCurrentMode).toLowerCase() : null;
+  msPendingMode = (mode === cur) ? null : mode;
+  renderModes();
+}
+
+// Actually send the staged mode change (the Apply button).
+function applyMode() {
+  if (!msPendingMode || msModeBusy) return;
+  setMsMode(msPendingMode);
+}
+
 function updateAppliance(d) {
   if (!d || !d.available) {
     setPill($("ms_pill"), "Off", "");
@@ -254,6 +277,7 @@ function updateAppliance(d) {
     msCooldownRemaining = 0;
     syncPowerBtn();
     msCurrentMode = null;
+    msPendingMode = null;
     msModeCooldownRemaining = 0;
     renderModes();
     return;
@@ -281,6 +305,8 @@ function updateAppliance(d) {
   msCooldownRemaining = d.power_cooldown || 0;
   syncPowerBtn();
   msCurrentMode = d.mode;
+  // once the unit reports the mode we staged, the change has landed — drop the pending state
+  if (msPendingMode && String(msPendingMode).toLowerCase() === String(d.mode || "").toLowerCase()) msPendingMode = null;
   msModeCooldownRemaining = d.mode_cooldown || 0;
   renderModes();
 
@@ -343,6 +369,8 @@ async function setMsMode(mode) {
       body: JSON.stringify({ mode }),
     })).json();
     if (r.ok) {
+      msCurrentMode = mode;  // optimistic — the next poll will confirm
+      msPendingMode = null;  // applied — clear the staged change
       showToast(`Mode set to ${msModeLabel(mode)}`, "ok");
     } else if (r.cooldown) {
       msModeCooldownRemaining = r.retry_after || msModeCooldownRemaining;
@@ -852,7 +880,8 @@ $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
 $("ms_power_btn").addEventListener("click", toggleMsPower);
 $("ms_mode_btn").addEventListener("click", (e) => { e.stopPropagation(); toggleModeMenu(); });
-$("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { setMsMode(b.dataset.mode); closeModeMenu(); } });
+$("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { selectMode(b.dataset.mode); closeModeMenu(); } });
+$("ms_mode_apply").addEventListener("click", (e) => { e.stopPropagation(); applyMode(); });
 document.addEventListener("click", (e) => { if (!e.target.closest("#ms_mode_select")) closeModeMenu(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModeMenu(); });
 initSettings();
