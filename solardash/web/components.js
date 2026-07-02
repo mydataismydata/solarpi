@@ -273,15 +273,25 @@ function kwhText(v) {
 }
 function showEbarPopup(group) {
   const p = ebarPopup();
-  const pv = +group.dataset.pv || 0, load = +group.dataset.load || 0;
-  const charge = +group.dataset.charge || 0, discharge = +group.dataset.discharge || 0;
-  let html =
-    `<div class="pop-title">${group.dataset.title || group.dataset.label}</div>` +
-    `<div class="pop-row"><i style="background:#FBBF24"></i>Solar PV<b>${kwhText(pv)}</b></div>` +
-    `<div class="pop-row"><i style="background:#9C8CFB"></i>AC Output<b>${kwhText(load)}</b></div>`;
-  if (charge || discharge) {
-    const net = charge >= discharge ? "+" + kwhText(charge) : "−" + kwhText(discharge);
-    html += `<div class="pop-row"><i style="background:#34D399"></i>Battery<b>${net}</b></div>`;
+  let html;
+  if (group.dataset.solar !== undefined || group.dataset.grid !== undefined) {
+    // Mini-split energy column: solar (DC) vs grid (AC) draw.
+    const solar = +group.dataset.solar || 0, grid = +group.dataset.grid || 0;
+    html =
+      `<div class="pop-title">${group.dataset.title || group.dataset.label}</div>` +
+      `<div class="pop-row"><i style="background:#FBBF24"></i>Solar<b>${kwhText(solar)}</b></div>` +
+      `<div class="pop-row"><i style="background:#2DD4BF"></i>Grid · AC<b>${kwhText(grid)}</b></div>`;
+  } else {
+    const pv = +group.dataset.pv || 0, load = +group.dataset.load || 0;
+    const charge = +group.dataset.charge || 0, discharge = +group.dataset.discharge || 0;
+    html =
+      `<div class="pop-title">${group.dataset.title || group.dataset.label}</div>` +
+      `<div class="pop-row"><i style="background:#FBBF24"></i>Solar PV<b>${kwhText(pv)}</b></div>` +
+      `<div class="pop-row"><i style="background:#9C8CFB"></i>AC Output<b>${kwhText(load)}</b></div>`;
+    if (charge || discharge) {
+      const net = charge >= discharge ? "+" + kwhText(charge) : "−" + kwhText(discharge);
+      html += `<div class="pop-row"><i style="background:#34D399"></i>Battery<b>${net}</b></div>`;
+    }
   }
   p.innerHTML = html;
   p.style.display = "block";
@@ -339,6 +349,46 @@ function renderEnergyBars(container, slots, visible) {
       const outBar = showOut ? `<div class="ebar ebar-out" style="height:${oh.toFixed(1)}%"></div>` : "";
       return `<div class="ebar-group" data-label="${s.label}" data-title="${s.title || s.label}" data-pv="${s.pv}" data-load="${s.load}" data-charge="${s.charge || 0}" data-discharge="${s.discharge || 0}">
         <div class="ebar-plot">${inBar}${outBar}</div>
+        <div class="ebar-x">${s.label}</div>
+      </div>`;
+    })
+    .join("");
+
+  container.innerHTML = axis + `<div class="ebars-track">${bars}</div>`;
+}
+
+/* Mini-split energy bars: same grouped-column layout as renderEnergyBars, but the two series are the
+   appliance's solar (DC) and grid (AC) draw in kWh. Slots: [{label, title, solar, grid}]. */
+function renderMsEnergyBars(container, slots, visible) {
+  hideEbarPopup();
+  if (!slots || !slots.length) {
+    container.innerHTML = '<div class="ebars-empty">No mini-split energy logged yet — give it a bit.</div>';
+    return;
+  }
+  const showSolar = !visible || visible.solar !== false;
+  const showGrid = !visible || visible.grid !== false;
+  let maxV = 0;
+  for (const s of slots) {
+    if (showSolar) maxV = Math.max(maxV, s.solar);
+    if (showGrid) maxV = Math.max(maxV, s.grid);
+  }
+  const step = niceStep(maxV);
+  const axisMax = Math.max(step, Math.ceil(maxV / step) * step);
+  const fmtTick = (t) =>
+    Math.abs(t) < 1e-9 ? "0" : axisMax < 1 ? t.toFixed(2) : axisMax < 10 ? t.toFixed(1) : String(Math.round(t));
+
+  const ticks = [];
+  for (let t = axisMax; t > -1e-9; t -= step) ticks.push(t);
+  const axis = `<div class="eaxis" title="kWh">${ticks.map((t) => `<span>${fmtTick(t)}</span>`).join("")}</div>`;
+
+  const bars = slots
+    .map((s) => {
+      const sh = (s.solar / axisMax) * 100;
+      const gh = (s.grid / axisMax) * 100;
+      const solarBar = showSolar ? `<div class="ebar ebar-ms-solar" style="height:${sh.toFixed(1)}%"></div>` : "";
+      const gridBar = showGrid ? `<div class="ebar ebar-ms-grid" style="height:${gh.toFixed(1)}%"></div>` : "";
+      return `<div class="ebar-group" data-label="${s.label}" data-title="${s.title || s.label}" data-solar="${s.solar}" data-grid="${s.grid}">
+        <div class="ebar-plot">${solarBar}${gridBar}</div>
         <div class="ebar-x">${s.label}</div>
       </div>`;
     })

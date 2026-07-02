@@ -117,6 +117,14 @@ class TimeSeriesStore:
                 "  charge_wh REAL NOT NULL DEFAULT 0,\n"
                 "  discharge_wh REAL NOT NULL DEFAULT 0\n)"
             )
+            # Mini-split hourly energy (Wh): how much the appliance drew from solar (DC) vs grid
+            # (AC), accrued by the AppliancePoller. Rolled up day/month the same way as the inverter.
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS appliance_energy_hourly (\n"
+                "  hour INTEGER PRIMARY KEY,\n"
+                "  solar_wh REAL NOT NULL DEFAULT 0,\n"
+                "  grid_wh REAL NOT NULL DEFAULT 0\n)"
+            )
             # All-time peak instantaneous power (W): a single row holding the highest pv_power /
             # load_total ever sampled. Rolled forward on insert() so the lifetime-peak read is O(1)
             # (no full-table scan every minute) and survives sample pruning. Seeded from any history
@@ -256,6 +264,58 @@ class TimeSeriesStore:
                 (hour, pv, load, charge, discharge),
             )
             self._conn.commit()
+
+    def accrue_appliance(self, ts: int, dt_s: float, solar_w: float, grid_w: float) -> None:
+        """Add the mini-split's energy from a dt_s-long interval (avg powers) into the hour bucket.
+        Solar/grid are the appliance's split source powers; negatives clamp to 0."""
+        if dt_s <= 0:
+            return
+        hour = ts - (ts % 3600)
+        f = dt_s / 3600.0
+        solar = max(0.0, solar_w) * f
+        grid = max(0.0, grid_w) * f
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO appliance_energy_hourly (hour, solar_wh, grid_wh) VALUES (?, ?, ?) "
+                "ON CONFLICT(hour) DO UPDATE SET "
+                "  solar_wh = solar_wh + excluded.solar_wh, grid_wh = grid_wh + excluded.grid_wh",
+                (hour, solar, grid),
+            )
+            self._conn.commit()
+
+    def appliance_energy_buckets(
+        self, period: str, start: Optional[int] = None, end: Optional[int] = None, limit: Optional[int] = None
+    ) -> List[Dict[str, object]]:
+        """Roll the mini-split's hourly energy into hour/day/month buckets (local time). kWh."""
+        fmt = self._PERIOD_FMT.get(period)
+        if fmt is None:
+            return []
+        where, params = [], []
+        if start is not None:
+            where.append("hour >= ?")
+            params.append(start - (start % 3600))
+        if end is not None:
+            where.append("hour <= ?")
+            params.append(end)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        sql = (
+            f"SELECT strftime('{fmt}', hour, 'unixepoch', 'localtime') AS bucket, "
+            f"  MIN(hour) AS start_ts, "
+            f"  SUM(solar_wh) AS solar, SUM(grid_wh) AS grid "
+            f"FROM appliance_energy_hourly{where_sql} GROUP BY bucket ORDER BY start_ts"
+        )
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        out = [
+            {
+                "bucket": r["bucket"],
+                "start_ts": r["start_ts"],
+                "solar_kwh": round((r["solar"] or 0) / 1000.0, 4),
+                "grid_kwh": round((r["grid"] or 0) / 1000.0, 4),
+            }
+            for r in rows
+        ]
+        return out[-limit:] if limit else out
 
     def energy_buckets(
         self, period: str, start: Optional[int] = None, end: Optional[int] = None, limit: Optional[int] = None

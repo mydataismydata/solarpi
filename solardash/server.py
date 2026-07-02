@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
             version=cfg.appliance_version,
             temp_divisor=cfg.appliance_temp_divisor,
         )
-        appliance_poller = AppliancePoller(appliance_client, interval_s=cfg.appliance_interval_s)
+        appliance_poller = AppliancePoller(appliance_client, interval_s=cfg.appliance_interval_s, store=store)
         appliance_task = asyncio.create_task(appliance_poller.run(appliance_stop))
 
     # Advertise over mDNS so the Android app finds us. The serve port comes from uvicorn, not Config,
@@ -229,6 +229,17 @@ async def inverter_output(on: bool = Body(..., embed=True)):
     if not app.state.cfg.inverter_control_enabled:
         return {"ok": False, "error": "inverter control disabled"}
     return await app.state.inverter_control.set_output(on)
+
+
+@app.get("/api/appliance/energy")
+async def appliance_energy(
+    period: str = Query("day", description="hour | day | month"),
+    start: Optional[int] = Query(None),
+    end: Optional[int] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=2000),
+):
+    """Mini-split energy roll-up (kWh) split into solar (DC) vs grid (AC) draw, for its trends chart."""
+    return api.appliance_energy_payload(app.state.store, period, start, end, limit)
 
 
 @app.get("/api/history")

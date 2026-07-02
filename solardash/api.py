@@ -103,6 +103,19 @@ def energy_payload(
     return {"period": period, "buckets": store.energy_buckets(period, start=start, end=end, limit=limit)}
 
 
+def appliance_energy_payload(
+    store: TimeSeriesStore,
+    period: str = "day",
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> Dict[str, object]:
+    """Mini-split energy roll-up buckets (kWh), split into solar (DC) vs grid (AC) draw."""
+    if period not in ENERGY_PERIODS:
+        period = "day"
+    return {"period": period, "buckets": store.appliance_energy_buckets(period, start=start, end=end, limit=limit)}
+
+
 def lifetime_payload(store: TimeSeriesStore) -> Dict[str, object]:
     """All-time input (PV) / output (load) energy totals (kWh) for the header strip."""
     return store.energy_lifetime()

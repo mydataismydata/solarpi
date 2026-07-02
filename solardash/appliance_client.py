@@ -22,6 +22,7 @@ from . import appliance
 
 DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
+MAX_ENERGY_GAP_S = 300.0  # don't integrate energy across gaps longer than this (unit unreachable)
 POWER_COOLDOWN_S = 300  # ignore on/off commands for 5 min after a change (protect the compressor)
 APPLIANCE_MODES = ("auto", "cold", "hot", "wind", "wet")  # DP 4 enum (cold=cool, hot=heat, wet=dry)
 MODE_REVERSE_COOLDOWN_S = 300  # gate cool/dry <-> heat switches for 5 min (compressor reversal)
@@ -123,16 +124,22 @@ class AppliancePoller:
         client: ApplianceClient,
         interval_s: float = DEFAULT_INTERVAL_S,
         clock: Callable[[], float] = time.time,
+        store=None,
     ):
         self.client = client
         self.interval_s = interval_s
         self.clock = clock
+        self.store = store  # TimeSeriesStore for solar/grid energy accrual (None = don't persist)
         self.last_ts: Optional[int] = None
         self.status: Optional[appliance.ApplianceStatus] = None
         self.raw_dps: Optional[Dict[str, object]] = None
         self.consecutive_failures = 0
         self.last_power_change: Optional[int] = None  # epoch of the last on/off change (cooldown anchor)
         self.last_mode_reverse: Optional[int] = None  # epoch of the last heat<->cool switch (mode gate)
+        # trapezoidal energy-integration state (previous sample's time + source powers)
+        self._e_ts: Optional[int] = None
+        self._e_solar = 0.0
+        self._e_grid = 0.0
 
     async def poll_once(self) -> Optional[appliance.ApplianceStatus]:
         reading = await self.client.read()
@@ -143,7 +150,19 @@ class AppliancePoller:
         self.status = reading.status
         self.raw_dps = reading.raw_dps
         self.last_ts = int(self.clock())
+        self._accrue_energy(self.last_ts, reading.status)
         return reading.status
+
+    def _accrue_energy(self, ts: int, status: appliance.ApplianceStatus) -> None:
+        """Integrate the appliance's solar/grid draw into the store's hourly energy buckets."""
+        solar = max(0.0, getattr(status, "solar_power", None) or 0.0)
+        grid = max(0.0, getattr(status, "grid_power", None) or 0.0)
+        if self.store is not None and self._e_ts is not None:
+            dt = ts - self._e_ts
+            if 0 < dt <= MAX_ENERGY_GAP_S:
+                # trapezoidal: average of previous and current power over the interval
+                self.store.accrue_appliance(ts, dt, (self._e_solar + solar) / 2, (self._e_grid + grid) / 2)
+        self._e_ts, self._e_solar, self._e_grid = ts, solar, grid
 
     def power_cooldown_remaining(self) -> int:
         """Seconds left in the post-change lockout (0 = a power command is allowed now).

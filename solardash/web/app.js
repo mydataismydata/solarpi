@@ -29,6 +29,8 @@ let activeWin = 86400;
 let activeBattWin = 86400;
 let activePeriod = "hour";
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
+let msActivePeriod = "hour"; // selected range for the mini-split energy chart
+let msEnergyView = null;     // { period, rows } currently displayed for the mini-split energy chart
 let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
 let lastCurrent = null; // last /api/current payload, so the W/A toggle can re-render instantly
 let msPowerOn = false;        // latest mini-split on/off state
@@ -845,9 +847,69 @@ function initERanges() {
   });
 }
 
+// ---- mini-split energy chart (solar vs grid draw, kWh) ---------------------
+
+const MS_ENERGY_SERIES = [
+  { key: "solar", label: "Solar (kWh)", color: "#FBBF24" },
+  { key: "grid", label: "Grid · AC (kWh)", color: "#2DD4BF" },
+];
+const msEnergyVisible = () => ({ solar: seriesVisible("msenergy", "solar"), grid: seriesVisible("msenergy", "grid") });
+
+async function loadMsEnergy(period) {
+  const slots = genSlots(period);
+  if (!slots.length) return;
+  let payload;
+  try { payload = await (await fetch(`api/appliance/energy?period=${period}&start=${slots[0].start_ts}`, { cache: "no-store" })).json(); }
+  catch (e) { return; }
+  const byKey = {};
+  for (const b of payload.buckets || []) byKey[b.bucket] = b;
+  let tSolar = 0, tGrid = 0, maxSolar = 0, maxGrid = 0;
+  const merged = slots.map((s) => {
+    const d = byKey[s.key];
+    const solar = d ? d.solar_kwh : 0, grid = d ? d.grid_kwh : 0;
+    tSolar += solar; tGrid += grid;
+    if (solar > maxSolar) maxSolar = solar;
+    if (grid > maxGrid) maxGrid = grid;
+    return { key: s.key, label: s.label, title: s.title, solar, grid };
+  });
+  msEnergyView = { period, rows: merged };
+  $("mse_solar").textContent = fmt(tSolar, 1);
+  $("mse_grid").textContent = fmt(tGrid, 1);
+  $("mse_max_solar").textContent = fmt(maxSolar, 2);
+  $("mse_max_grid").textContent = fmt(maxGrid, 2);
+  renderMsEnergyBars($("msEbars"), merged, msEnergyVisible());
+}
+
+function renderMsEnergyLegend() {
+  $("msElegend").innerHTML = MS_ENERGY_SERIES
+    .map((s) => `<span class="item${seriesVisible("msenergy", s.key) ? "" : " off"}" data-key="${s.key}" title="Show/hide ${s.label}"><span class="swatch" style="background:${s.color}"></span>${s.label}</span>`)
+    .join("");
+}
+
+function initMsERanges() {
+  renderMsEnergyLegend();
+  $("msElegend").addEventListener("click", (e) => {
+    const item = e.target.closest(".item");
+    if (!item) return;
+    const key = item.dataset.key;
+    const next = !seriesVisible("msenergy", key);
+    setSeriesVisible("msenergy", key, next);
+    item.classList.toggle("off", !next);
+    if (msEnergyView) renderMsEnergyBars($("msEbars"), msEnergyView.rows, msEnergyVisible());
+  });
+  $("mseRanges").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    document.querySelectorAll("#mseRanges button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    msActivePeriod = btn.dataset.period;
+    loadMsEnergy(msActivePeriod);
+  });
+}
+
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", batteryHistory: "solar.showBatteryHistory" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", batteryHistory: "solar.showBatteryHistory", msEnergy: "solar.showMsEnergy" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
@@ -856,16 +918,19 @@ function applySettings() {
   const energy = getBool(SETTING.energy, true);
   const history = getBool(SETTING.history, true);
   const batteryHistory = getBool(SETTING.batteryHistory, true);
+  const msEnergy = getBool(SETTING.msEnergy, true);
   document.body.classList.toggle("hide-acin", !acin);
   document.body.classList.toggle("hide-battery", !battery);
   document.body.classList.toggle("hide-energy", !energy);
   document.body.classList.toggle("hide-history", !history);
   document.body.classList.toggle("hide-battery-history", !batteryHistory);
+  document.body.classList.toggle("hide-msenergy", !msEnergy);
   $("toggleAcIn").checked = acin;
   $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
   $("toggleHistory").checked = history;
   $("toggleBatteryHistory").checked = batteryHistory;
+  $("toggleMsEnergy").checked = msEnergy;
 }
 
 function initSettings() {
@@ -881,6 +946,7 @@ function initSettings() {
   bind(SETTING.energy, "toggleEnergy");
   bind(SETTING.history, "toggleHistory");
   bind(SETTING.batteryHistory, "toggleBatteryHistory");
+  bind(SETTING.msEnergy, "toggleMsEnergy");
 }
 
 // ---- per-tile W/A unit toggles (Solar PV / AC Output / AC Input) -----------
@@ -961,6 +1027,8 @@ initRanges();
 initBatteryRanges();
 initERanges();
 initEbarPopup($("ebars"));
+initMsERanges();
+initEbarPopup($("msEbars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
 $("ms_power_btn").addEventListener("click", toggleMsPower);
@@ -986,6 +1054,7 @@ loadBatteryHistory(activeBattWin);
 loadToday();
 loadLifetime();
 loadEnergy(activePeriod);
+loadMsEnergy(msActivePeriod);
 setInterval(loadCurrent, 5000);
 setInterval(loadAppliance, 5000);
 setInterval(() => {
@@ -998,3 +1067,4 @@ setInterval(() => loadBatteryHistory(activeBattWin), 30000);
 setInterval(loadToday, 60000);
 setInterval(loadLifetime, 60000);
 setInterval(() => loadEnergy(activePeriod), 60000);
+setInterval(() => loadMsEnergy(msActivePeriod), 60000);

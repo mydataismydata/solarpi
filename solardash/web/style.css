@@ -306,6 +306,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .ebar { flex: 1 1 auto; max-width: 30px; border-radius: 3px 3px 0 0; min-height: 6px; transition: height 0.4s ease; border: 2px solid transparent; }
 .ebar-in { border-color: var(--bar-in); background: color-mix(in srgb, var(--bar-in) 18%, transparent); }
 .ebar-out { border-color: var(--bar-out); background: color-mix(in srgb, var(--bar-out) 18%, transparent); }
+.ebar-ms-solar { border-color: #FBBF24; background: color-mix(in srgb, #FBBF24 18%, transparent); }
+.ebar-ms-grid { border-color: #2DD4BF; background: color-mix(in srgb, #2DD4BF 18%, transparent); }
 .ebar-x { font-size: 10px; color: var(--txt3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ebars-empty { color: var(--txt3); font-size: 13px; padding: 50px 0; text-align: center; width: 100%; }
 .ebar-group { cursor: pointer; }
@@ -347,6 +349,7 @@ body.hide-battery #batteryDetailCard { display: none; }
 body.hide-energy #energyCard { display: none; }
 body.hide-history #historyCard { display: none; }
 body.hide-battery-history #batteryHistoryCard { display: none; }
+body.hide-msenergy #msEnergyCard { display: none; }
 
 /* Snapshot confirmation toast (bottom-centre, auto-dismissed). */
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60;

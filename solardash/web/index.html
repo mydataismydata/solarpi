@@ -34,6 +34,7 @@
           <label class="setting-row"><span>Show energy trends</span><input type="checkbox" id="toggleEnergy" /></label>
           <label class="setting-row"><span>Show power history</span><input type="checkbox" id="toggleHistory" /></label>
           <label class="setting-row"><span>Show battery history</span><input type="checkbox" id="toggleBatteryHistory" /></label>
+          <label class="setting-row"><span>Show mini-split energy</span><input type="checkbox" id="toggleMsEnergy" /></label>
         </div>
       </div>
     </div>
@@ -294,6 +295,25 @@
       </div>
       <div id="batteryChart"></div>
       <div class="legend" id="batteryLegend"></div>
+    </section>
+
+    <section class="card energy-card" id="msEnergyCard">
+      <div class="chart-head">
+        <div class="head-left">
+          <h2>Mini-split energy</h2>
+          <div class="lt-inline" id="msEtotalsInline" title="Energy the mini-split drew, by source, over the selected period (max = peak bucket)">
+            <span class="lti">Solar <b id="mse_solar">—</b> <span class="lti-peak">(max <b id="mse_max_solar">—</b>)</span></span>
+            <span class="lti">Grid <b id="mse_grid">—</b> <span class="lti-peak">(max <b id="mse_max_grid">—</b>)</span> kWh</span>
+          </div>
+        </div>
+        <div class="ranges" id="mseRanges">
+          <button data-period="hour" class="active">Daily</button>
+          <button data-period="day">Monthly</button>
+          <button data-period="month">Yearly</button>
+        </div>
+      </div>
+      <div class="ebars" id="msEbars"></div>
+      <div class="legend" id="msElegend"></div>
     </section>
   </main>
 
