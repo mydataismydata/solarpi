@@ -22,7 +22,8 @@ from . import appliance
 
 DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
-MAX_ENERGY_GAP_S = 300.0  # don't integrate energy across gaps longer than this (unit unreachable)
+MAX_ENERGY_GAP_S = 300.0  # power-integration fallback: don't integrate across gaps longer than this
+COUNTER_MAX_JUMP_WH = 100000.0  # a single counter delta bigger than this is a reset/bad read -> skip
 POWER_COOLDOWN_S = 300  # ignore on/off commands for 5 min after a change (protect the compressor)
 APPLIANCE_MODES = ("auto", "cold", "hot", "wind", "wet")  # DP 4 enum (cold=cool, hot=heat, wet=dry)
 MODE_REVERSE_COOLDOWN_S = 300  # gate cool/dry <-> heat switches for 5 min (compressor reversal)
@@ -136,7 +137,10 @@ class AppliancePoller:
         self.consecutive_failures = 0
         self.last_power_change: Optional[int] = None  # epoch of the last on/off change (cooldown anchor)
         self.last_mode_reverse: Optional[int] = None  # epoch of the last heat<->cool switch (mode gate)
-        # trapezoidal energy-integration state (previous sample's time + source powers)
+        # energy-accrual state. Primary: last cumulative counters (DP 107 solar / DP 110 total Wh),
+        # differenced between reads. Fallback: trapezoidal integration of instantaneous power.
+        self._e_solar_c: Optional[float] = None
+        self._e_total_c: Optional[float] = None
         self._e_ts: Optional[int] = None
         self._e_solar = 0.0
         self._e_grid = 0.0
@@ -154,13 +158,32 @@ class AppliancePoller:
         return reading.status
 
     def _accrue_energy(self, ts: int, status: appliance.ApplianceStatus) -> None:
-        """Integrate the appliance's solar/grid draw into the store's hourly energy buckets."""
+        """Record the appliance's solar/grid energy since the last read.
+
+        Primary path: difference the unit's own cumulative Wh counters (solar_energy / total_energy;
+        grid = total - solar). These are authoritative and robust to this Wi-Fi module's flaky
+        polling — the energy is real no matter how far apart two successful reads land, so there is
+        no gap guard, only a reset/bad-read clamp. Falls back to integrating instantaneous power for
+        firmware that doesn't report the counters."""
+        if self.store is None:
+            return
+        solar_c = getattr(status, "solar_energy", None)
+        total_c = getattr(status, "total_energy", None)
+        if solar_c is not None and total_c is not None:
+            if self._e_solar_c is not None:
+                d_solar = solar_c - self._e_solar_c
+                d_total = total_c - self._e_total_c
+                if 0 <= d_solar < COUNTER_MAX_JUMP_WH and 0 <= d_total < COUNTER_MAX_JUMP_WH:
+                    self.store.accrue_appliance_wh(ts, d_solar, max(0.0, d_total - d_solar))
+            self._e_solar_c, self._e_total_c = solar_c, total_c
+            return
+
+        # Fallback: integrate instantaneous power (skips gaps that are probably downtime).
         solar = max(0.0, getattr(status, "solar_power", None) or 0.0)
         grid = max(0.0, getattr(status, "grid_power", None) or 0.0)
-        if self.store is not None and self._e_ts is not None:
+        if self._e_ts is not None:
             dt = ts - self._e_ts
             if 0 < dt <= MAX_ENERGY_GAP_S:
-                # trapezoidal: average of previous and current power over the interval
                 self.store.accrue_appliance(ts, dt, (self._e_solar + solar) / 2, (self._e_grid + grid) / 2)
         self._e_ts, self._e_solar, self._e_grid = ts, solar, grid
 

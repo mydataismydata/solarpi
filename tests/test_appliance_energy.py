@@ -61,6 +61,15 @@ class _Status:
         self.grid_power = grid
 
 
+class _CounterStatus:
+    """A status that reports cumulative energy counters (Wh) but no instantaneous power, so the
+    poller takes the primary counter-delta path."""
+
+    def __init__(self, solar_energy, total_energy):
+        self.solar_energy = solar_energy
+        self.total_energy = total_energy
+
+
 class _Reading:
     def __init__(self, status):
         self.status = status
@@ -110,6 +119,34 @@ class AppliancePollerEnergyTest(unittest.IsolatedAsyncioTestCase):
         poller = AppliancePoller(client, store=None, clock=lambda: 0)
         await poller.poll_once()
         await poller.poll_once()  # must not raise without a store
+
+
+class AppliancePollerCounterEnergyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_counter_deltas_accrue_regardless_of_gap(self):
+        store = TimeSeriesStore(":memory:")
+        now = [1000]
+        # cumulative solar 1000->1100 Wh (+100), total 1500->1900 Wh (+400) => grid = 400-100 = 300
+        client = _FakeClient([_Reading(_CounterStatus(1000.0, 1500.0)), _Reading(_CounterStatus(1100.0, 1900.0))])
+        poller = AppliancePoller(client, store=store, clock=lambda: now[0])
+        await poller.poll_once()  # baseline only
+        self.assertEqual(store.appliance_energy_buckets("hour"), [])
+        now[0] += 9999            # huge gap: the device counted the energy, so it must still record
+        await poller.poll_once()
+        b = store.appliance_energy_buckets("hour")
+        self.assertEqual(len(b), 1)
+        self.assertAlmostEqual(b[0]["solar_kwh"], 0.1, places=3)
+        self.assertAlmostEqual(b[0]["grid_kwh"], 0.3, places=3)
+
+    async def test_counter_reset_is_skipped(self):
+        store = TimeSeriesStore(":memory:")
+        now = [1000]
+        # device power-cycled: counters jump backward -> negative delta -> not recorded
+        client = _FakeClient([_Reading(_CounterStatus(5000.0, 8000.0)), _Reading(_CounterStatus(10.0, 20.0))])
+        poller = AppliancePoller(client, store=store, clock=lambda: now[0])
+        await poller.poll_once()
+        now[0] += 60
+        await poller.poll_once()
+        self.assertEqual(store.appliance_energy_buckets("hour"), [])
 
 
 if __name__ == "__main__":

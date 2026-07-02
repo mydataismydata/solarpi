@@ -265,15 +265,14 @@ class TimeSeriesStore:
             )
             self._conn.commit()
 
-    def accrue_appliance(self, ts: int, dt_s: float, solar_w: float, grid_w: float) -> None:
-        """Add the mini-split's energy from a dt_s-long interval (avg powers) into the hour bucket.
-        Solar/grid are the appliance's split source powers; negatives clamp to 0."""
-        if dt_s <= 0:
+    def accrue_appliance_wh(self, ts: int, solar_wh: float, grid_wh: float) -> None:
+        """Add already-computed mini-split energy (Wh) into the hour-of-ts bucket. Negatives clamp
+        to 0; a fully-zero contribution writes nothing (no empty rows)."""
+        solar = max(0.0, solar_wh)
+        grid = max(0.0, grid_wh)
+        if solar <= 0 and grid <= 0:
             return
         hour = ts - (ts % 3600)
-        f = dt_s / 3600.0
-        solar = max(0.0, solar_w) * f
-        grid = max(0.0, grid_w) * f
         with self._lock:
             self._conn.execute(
                 "INSERT INTO appliance_energy_hourly (hour, solar_wh, grid_wh) VALUES (?, ?, ?) "
@@ -282,6 +281,13 @@ class TimeSeriesStore:
                 (hour, solar, grid),
             )
             self._conn.commit()
+
+    def accrue_appliance(self, ts: int, dt_s: float, solar_w: float, grid_w: float) -> None:
+        """Add the mini-split's energy from a dt_s-long interval (avg powers) into the hour bucket."""
+        if dt_s <= 0:
+            return
+        f = dt_s / 3600.0
+        self.accrue_appliance_wh(ts, max(0.0, solar_w) * f, max(0.0, grid_w) * f)
 
     def appliance_energy_buckets(
         self, period: str, start: Optional[int] = None, end: Optional[int] = None, limit: Optional[int] = None
