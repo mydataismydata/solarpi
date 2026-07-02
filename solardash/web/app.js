@@ -36,6 +36,8 @@ let msCooldownRemaining = 0;  // seconds left in the server-enforced power locko
 let msPowerBusy = false;      // a power command is in flight
 let msApplianceAvailable = false;
 let msModeBusy = false;       // a mode change is in flight
+let msCurrentMode = null;     // the unit's current mode (for the heat<->cool gate)
+let msModeCooldownRemaining = 0; // seconds left in the cool/dry<->heat lockout
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -196,6 +198,22 @@ function syncPowerBtn() {
   }
 }
 
+const isCooling = (m) => m === "cold" || m === "wet";
+
+// Render the mode selector: highlight the current mode, and during the reverse-gate disable ONLY
+// the buttons that would cross the heat/cool boundary (cool/dry <-> heat); cool<->dry stays free.
+function renderModes() {
+  const locked = msModeCooldownRemaining > 0;
+  $("ms_modes").querySelectorAll("button").forEach((b) => {
+    const m = b.dataset.mode;
+    b.classList.toggle("active", m === msCurrentMode);
+    const crosses = locked && msCurrentMode &&
+      ((isCooling(msCurrentMode) && m === "hot") || (msCurrentMode === "hot" && isCooling(m)));
+    b.disabled = !msApplianceAvailable || msModeBusy || crosses;
+    b.title = crosses ? `Heat/cool switch locked ${mmss(msModeCooldownRemaining)} — compressor protection` : "";
+  });
+}
+
 function updateAppliance(d) {
   if (!d || !d.available) {
     setPill($("ms_pill"), "Off", "");
@@ -211,7 +229,9 @@ function updateAppliance(d) {
     msApplianceAvailable = false;
     msCooldownRemaining = 0;
     syncPowerBtn();
-    $("ms_modes").querySelectorAll("button").forEach((b) => { b.classList.remove("active"); b.disabled = true; });
+    msCurrentMode = null;
+    msModeCooldownRemaining = 0;
+    renderModes();
     return;
   }
   const solar = Math.max(0, d.solar_power ?? 0);
@@ -236,10 +256,9 @@ function updateAppliance(d) {
   msApplianceAvailable = true;
   msCooldownRemaining = d.power_cooldown || 0;
   syncPowerBtn();
-  $("ms_modes").querySelectorAll("button").forEach((b) => {
-    b.classList.toggle("active", b.dataset.mode === d.mode);
-    b.disabled = msModeBusy;
-  });
+  msCurrentMode = d.mode;
+  msModeCooldownRemaining = d.mode_cooldown || 0;
+  renderModes();
 
   // secondary tile: current room temperature + the unit's settings
   $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
@@ -294,19 +313,26 @@ async function toggleMsPower() {
 async function setMsMode(mode) {
   if (msModeBusy) return;
   msModeBusy = true;
-  $("ms_modes").querySelectorAll("button").forEach((b) => (b.disabled = true));
+  renderModes();
   try {
     const r = await (await fetch("api/appliance/mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
     })).json();
-    if (r.ok) showToast(`Mode set to ${msMode(mode)}`, "ok");
-    else showToast(r.error || "Mode change didn't go through — try again", "err");
+    if (r.ok) {
+      showToast(`Mode set to ${msMode(mode)}`, "ok");
+    } else if (r.cooldown) {
+      msModeCooldownRemaining = r.retry_after || msModeCooldownRemaining;
+      showToast(`Heat/cool switch locked ${mmss(r.retry_after || 0)} — compressor protection`, "err");
+    } else {
+      showToast(r.error || "Mode change didn't go through — try again", "err");
+    }
   } catch (e) {
     showToast("Command failed — dashboard unreachable", "err");
   } finally {
     msModeBusy = false;
+    renderModes();
     loadAppliance();
   }
 }
@@ -816,7 +842,10 @@ loadLifetime();
 loadEnergy(activePeriod);
 setInterval(loadCurrent, 5000);
 setInterval(loadAppliance, 5000);
-setInterval(() => { if (msCooldownRemaining > 0) { msCooldownRemaining = Math.max(0, msCooldownRemaining - 1); syncPowerBtn(); } }, 1000);
+setInterval(() => {
+  if (msCooldownRemaining > 0) { msCooldownRemaining = Math.max(0, msCooldownRemaining - 1); syncPowerBtn(); }
+  if (msModeCooldownRemaining > 0) { msModeCooldownRemaining = Math.max(0, msModeCooldownRemaining - 1); renderModes(); }
+}, 1000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
 setInterval(() => loadBatteryHistory(activeBattWin), 30000);

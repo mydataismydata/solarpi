@@ -24,6 +24,13 @@ DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
 POWER_COOLDOWN_S = 300  # ignore on/off commands for 5 min after a change (protect the compressor)
 APPLIANCE_MODES = ("auto", "cold", "hot", "wind", "wet")  # DP 4 enum (cold=cool, hot=heat, wet=dry)
+MODE_REVERSE_COOLDOWN_S = 300  # gate cool/dry <-> heat switches for 5 min (compressor reversal)
+_COOLING_MODES = ("cold", "wet")  # cool + dry run the compressor the same way; hot reverses it
+
+
+def _is_compressor_reverse(from_mode, to_mode) -> bool:
+    """True when a mode switch crosses the heat/cool boundary (reverses the compressor)."""
+    return (from_mode in _COOLING_MODES and to_mode == "hot") or (from_mode == "hot" and to_mode in _COOLING_MODES)
 
 
 @dataclass
@@ -125,6 +132,7 @@ class AppliancePoller:
         self.raw_dps: Optional[Dict[str, object]] = None
         self.consecutive_failures = 0
         self.last_power_change: Optional[int] = None  # epoch of the last on/off change (cooldown anchor)
+        self.last_mode_reverse: Optional[int] = None  # epoch of the last heat<->cool switch (mode gate)
 
     async def poll_once(self) -> Optional[appliance.ApplianceStatus]:
         reading = await self.client.read()
@@ -156,12 +164,27 @@ class AppliancePoller:
             await self.poll_once()  # refresh the cached snapshot so the UI reflects the new state
         return {"ok": ok, "power": on if ok else None, "cooldown": False}
 
+    def mode_reverse_cooldown_remaining(self) -> int:
+        """Seconds left in the cool/dry <-> heat lockout (0 = a reversing switch is allowed now)."""
+        if self.last_mode_reverse is None:
+            return 0
+        return max(0, MODE_REVERSE_COOLDOWN_S - (int(self.clock()) - self.last_mode_reverse))
+
     async def set_mode(self, mode: str) -> Dict[str, object]:
-        """Set the operating mode (writes DP 4). No cooldown — the compressor guard is power-only."""
+        """Set the operating mode (writes DP 4). A cool/dry <-> heat switch reverses the compressor,
+        so it's gated by a 5-min cooldown (enforced here); same-side switches (cool<->dry) are free."""
         if mode not in APPLIANCE_MODES:
             return {"ok": False, "error": "unknown mode %r" % (mode,)}
+        current = self.status.mode if self.status else None
+        reversing = _is_compressor_reverse(current, mode)
+        if reversing:
+            remaining = self.mode_reverse_cooldown_remaining()
+            if remaining > 0:
+                return {"ok": False, "cooldown": True, "retry_after": remaining, "reason": "mode_reverse"}
         ok = await self.client.set_dp(4, mode)
         if ok:
+            if reversing:
+                self.last_mode_reverse = int(self.clock())
             await self.poll_once()
         return {"ok": ok, "mode": mode if ok else None}
 
