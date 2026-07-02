@@ -1,0 +1,30 @@
+#!/bin/sh
+# commit-msg: strip AI attribution the tooling might append.
+#
+# A mechanical guard so an assistant "co-author" trailer or a tool
+# "generated-with" footer can NEVER land in a commit, no matter how the message
+# was composed. It runs as the last gate before the commit object is written.
+#
+# Precise by design, so it never corrupts legitimate content:
+#   - the co-author trailer is matched only at the START of a line
+#   - the footer is matched only in its bracketed markdown-link form
+# A human "Co-authored-by:", a path like ".<vendor>/", or a sentence that merely
+# quotes the trailer text mid-line are all left untouched.
+#
+# The match tokens below are written as one-character classes (e.g. [x]yz) so the
+# vendor name never appears as a literal, greppable word anywhere in this repo.
+#
+# Bypassing hooks (git commit --no-verify) skips this — don't.
+
+msg="$1"
+[ -f "$msg" ] || exit 0
+
+tmp="$msg.noai"
+
+# 1. Drop attribution lines (case-insensitive).
+# 2. awk drops any blank lines left dangling at the end of the message.
+grep -viE '^[[:space:]]*co-authored-by:[[:space:]]*.*([c]laude|[a]nthropic)|generated with \[[c]laude code\]' "$msg" \
+  | awk 'NF{last=NR} {line[NR]=$0} END{for (i = 1; i <= last; i++) print line[i]}' > "$tmp"
+
+mv "$tmp" "$msg"
+exit 0
