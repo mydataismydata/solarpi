@@ -58,17 +58,36 @@ def main() -> int:
         print("tinytuya isn't installed here. Run:  pip install tinytuya")
         return 2
 
-    device_id = args.deviceid or _device_id_from_pairing(args.config)
-    if not device_id:
-        print("No device id. Pass --deviceid, or pair from the dashboard first (writes %s)." % args.config)
-        return 2
-
-    # Cloud() reads apiKey/apiSecret/apiRegion from tinytuya.json when the args are None.
-    cloud = tinytuya.Cloud(apiRegion=args.region, apiKey=args.apikey, apiSecret=args.apisecret, apiDeviceID=device_id)
+    # Build the cloud client first — with just the project creds we can list the devices, so a
+    # missing device id isn't fatal. With no CLI creds, Cloud() loads everything from tinytuya.json.
+    if args.apikey and args.apisecret:
+        cloud = tinytuya.Cloud(apiRegion=(args.region or "us"), apiKey=args.apikey,
+                               apiSecret=args.apisecret, apiDeviceID=(args.deviceid or ""))
+    else:
+        cloud = tinytuya.Cloud()
     if getattr(cloud, "error", None):
         print("Cloud auth failed: %r" % (cloud.error,))
         print("Set up creds with `python -m tinytuya wizard`, or pass --region/--apikey/--apisecret.")
         return 2
+
+    device_id = args.deviceid or _device_id_from_pairing(args.config)
+    if not device_id:
+        devs = cloud.getdevices(False)
+        if isinstance(devs, list) and devs:
+            print("=== Devices in your Tuya project ===")
+            for d in devs:
+                print("  id=%s  name=%r  product=%r  online=%s"
+                      % (d.get("id"), d.get("name"), d.get("product_name"), d.get("online")))
+            if len(devs) == 1:
+                device_id = devs[0].get("id")
+                print("\nUsing the only device: %s" % device_id)
+            else:
+                print("\nRe-run with --deviceid <the mini-split's id from the list above>.")
+                return 2
+        else:
+            print("No device id, and couldn't list devices: %r" % (devs,))
+            print("Pass --deviceid, or check the cloud creds in tinytuya.json.")
+            return 2
 
     print("=== Device (cloud) ===  id=%s" % device_id)
     info = cloud.getdevices(False)
