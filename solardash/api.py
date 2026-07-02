@@ -203,17 +203,19 @@ def battery_payload(poller) -> Dict[str, object]:
     }
 
 
-def appliance_payload(poller) -> Dict[str, object]:
+def appliance_payload(poller, configured: bool = False) -> Dict[str, object]:
     """Latest mini-split snapshot: power, climate, and the solar/grid power+energy split.
 
-    `raw_dps` carries the unmapped Tuya datapoints too, for debugging an unfamiliar firmware
-    over `curl` without a code change.
+    `configured` reports whether a unit is paired (vs. connected-but-no-data-yet), so the UI knows
+    whether to show live data or the connect form. `raw_dps` carries the unmapped Tuya datapoints
+    too, for debugging an unfamiliar firmware over `curl` without a code change.
     """
     if poller is None or getattr(poller, "status", None) is None:
-        return {"available": False}
+        return {"available": False, "configured": configured}
     s = poller.status
     return {
         "available": True,
+        "configured": configured,
         "ts": poller.last_ts,
         "power": s.power,
         "mode": s.mode,

@@ -82,6 +82,10 @@ class Config:
     appliance_version: float = 3.3
     appliance_interval_s: float = 30.0   # gentle: this Wi-Fi module is flaky on the LAN
     appliance_temp_divisor: float = 1.0  # set 10 if a live status() shows temps in tenths of a degree
+    # Where the UI-managed mini-split connection is persisted (JSON). Lives beside the DB (in the
+    # gitignored data dir). Once written it is the source of truth; the SOLAR_APPLIANCE_* env vars
+    # only seed it on first run.
+    appliance_config_path: str = "data/appliance.json"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -113,4 +117,5 @@ class Config:
             appliance_version=float(os.environ.get("SOLAR_APPLIANCE_VERSION", cls.appliance_version)),
             appliance_interval_s=float(os.environ.get("SOLAR_APPLIANCE_INTERVAL", cls.appliance_interval_s)),
             appliance_temp_divisor=float(os.environ.get("SOLAR_APPLIANCE_TEMP_DIVISOR", cls.appliance_temp_divisor)),
+            appliance_config_path=os.environ.get("SOLAR_APPLIANCE_CONFIG", cls.appliance_config_path),
         )

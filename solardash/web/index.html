@@ -33,8 +33,12 @@
           <label class="setting-row"><span>Show battery detail</span><input type="checkbox" id="toggleBattery" /></label>
           <label class="setting-row"><span>Show energy trends</span><input type="checkbox" id="toggleEnergy" /></label>
           <label class="setting-row"><span>Show power history</span><input type="checkbox" id="toggleHistory" /></label>
+          <label class="setting-row"><span>Show mini-split</span><input type="checkbox" id="toggleMinisplit" /></label>
           <label class="setting-row"><span>Show battery history</span><input type="checkbox" id="toggleBatteryHistory" /></label>
           <label class="setting-row"><span>Show mini-split energy</span><input type="checkbox" id="toggleMsEnergy" /></label>
+          <div class="settings-sep" id="unpairRow" hidden>
+            <button class="settings-action" id="unpairMsBtn" type="button">Unpair from Mini-split</button>
+          </div>
         </div>
       </div>
     </div>
@@ -204,24 +208,34 @@
         <div class="tile-sub" id="temp_sub">AC — · batt —</div>
       </div>
       <div class="tile" data-k="minisplit">
-        <div class="tile-head">
-          <div class="tile-label">Mini-split</div>
-          <div class="mode-select" id="ms_mode_select">
-            <button class="mode-cancel" id="ms_mode_cancel" type="button" hidden>Cancel</button>
-            <button class="mode-apply" id="ms_mode_apply" type="button" hidden>Apply</button>
-            <button class="mode-pill" id="ms_mode_btn" type="button" disabled aria-haspopup="listbox" aria-expanded="false" title="Pick a mode, then Apply — it's the mode the unit runs now, or the next time you turn it on">
-              <span id="ms_mode_label">—</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="mode-menu" id="ms_mode_menu" role="listbox" hidden>
-              <button data-mode="wet" role="option">Dry</button>
-              <button data-mode="cold" role="option">Cold</button>
-              <button data-mode="hot" role="option">Heat</button>
+        <div id="ms_live">
+          <div class="tile-head">
+            <div class="tile-label">Mini-split</div>
+            <div class="mode-select" id="ms_mode_select">
+              <button class="mode-cancel" id="ms_mode_cancel" type="button" hidden>Cancel</button>
+              <button class="mode-apply" id="ms_mode_apply" type="button" hidden>Apply</button>
+              <button class="mode-pill" id="ms_mode_btn" type="button" disabled aria-haspopup="listbox" aria-expanded="false" title="Pick a mode, then Apply — it's the mode the unit runs now, or the next time you turn it on">
+                <span id="ms_mode_label">—</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="mode-menu" id="ms_mode_menu" role="listbox" hidden>
+                <button data-mode="wet" role="option">Dry</button>
+                <button data-mode="cold" role="option">Cold</button>
+                <button data-mode="hot" role="option">Heat</button>
+              </div>
             </div>
           </div>
+          <div class="tile-value" id="ms_tile_temp">—</div>
+          <div class="tile-sub" id="ms_tile_sub">—</div>
         </div>
-        <div class="tile-value" id="ms_tile_temp">—</div>
-        <div class="tile-sub" id="ms_tile_sub">—</div>
+        <div class="ms-connect" id="ms_connect" hidden>
+          <div class="tile-label">Connect a mini-split</div>
+          <input class="ms-cx-input" id="ms_cx_ip" type="text" inputmode="decimal" placeholder="Device IP (e.g. 192.168.1.50)" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <input class="ms-cx-input" id="ms_cx_id" type="text" placeholder="Device ID" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <input class="ms-cx-input" id="ms_cx_key" type="text" placeholder="Local key" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <button class="ms-cx-btn" id="ms_cx_btn" type="button">Connect</button>
+          <div class="ms-cx-msg" id="ms_cx_msg"></div>
+        </div>
       </div>
       <div class="tile alert" data-k="fault" id="fault_tile">
         <div class="tile-label">Status</div>

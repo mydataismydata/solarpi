@@ -81,9 +81,11 @@ class ApplianceDecodeTest(unittest.TestCase):
 
 class ApplianceApiTest(unittest.TestCase):
     def test_unavailable(self):
-        self.assertEqual(api.appliance_payload(None), {"available": False})
+        self.assertEqual(api.appliance_payload(None), {"available": False, "configured": False})
         # A poller that has never produced a status is also "unavailable".
-        self.assertEqual(api.appliance_payload(_FakePoller(None, None)), {"available": False})
+        self.assertEqual(api.appliance_payload(_FakePoller(None, None)), {"available": False, "configured": False})
+        # `configured` passes through (paired but no data yet).
+        self.assertEqual(api.appliance_payload(None, configured=True), {"available": False, "configured": True})
 
     def test_payload_shape(self):
         status = appliance.decode(SAMPLE_DPS)

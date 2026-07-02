@@ -275,6 +275,13 @@ function cancelMode() {
 }
 
 function updateAppliance(d) {
+  // Pairing state: show the connect form (in the tile) when no unit is paired; the live readout and
+  // the Settings "Unpair" action appear once it is. `configured` = paired (vs. connecting/no data).
+  const configured = !!(d && d.configured);
+  $("ms_connect").hidden = configured;
+  $("ms_live").hidden = !configured;
+  $("unpairRow").hidden = !configured;
+
   if (!d || !d.available) {
     setPill($("ms_pill"), "Off", "");
     msGauge.set(0, 0);
@@ -340,6 +347,66 @@ async function loadAppliance() {
   try {
     updateAppliance(await (await fetch("api/appliance", { cache: "no-store" })).json());
   } catch (e) { /* leave previous render */ }
+}
+
+// ---- pairing (connect / unpair from the UI) -------------------------------
+
+async function connectMs() {
+  const ip = $("ms_cx_ip").value.trim(), id = $("ms_cx_id").value.trim(), key = $("ms_cx_key").value.trim();
+  const msg = $("ms_cx_msg");
+  if (!ip || !id || !key) { msg.className = "ms-cx-msg err"; msg.textContent = "Fill in IP, device ID, and local key."; return; }
+  const btn = $("ms_cx_btn");
+  btn.disabled = true;
+  msg.className = "ms-cx-msg"; msg.textContent = "Connecting…";
+  try {
+    const r = await (await fetch("api/appliance/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ip, device_id: id, local_key: key }),
+    })).json();
+    if (r.ok) {
+      msg.className = "ms-cx-msg ok"; msg.textContent = "Connected.";
+      showToast("Mini-split connected", "ok");
+      $("ms_cx_ip").value = $("ms_cx_id").value = $("ms_cx_key").value = "";
+      loadAppliance();
+    } else {
+      msg.className = "ms-cx-msg err"; msg.textContent = r.error || "Couldn't connect.";
+    }
+  } catch (e) {
+    msg.className = "ms-cx-msg err"; msg.textContent = "Request failed — dashboard unreachable.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Unpair is destructive (you'd re-enter IP/id/key to reconnect), so it arms on the first click and
+// fires on a second click within 4s.
+let _unpairArmed = false, _unpairTimer = null;
+function disarmUnpair() {
+  _unpairArmed = false;
+  if (_unpairTimer) { clearTimeout(_unpairTimer); _unpairTimer = null; }
+  const btn = $("unpairMsBtn");
+  btn.classList.remove("armed");
+  btn.textContent = "Unpair from Mini-split";
+}
+function onUnpairClick() {
+  const btn = $("unpairMsBtn");
+  if (!_unpairArmed) {
+    _unpairArmed = true;
+    btn.classList.add("armed");
+    btn.textContent = "Click again to confirm";
+    _unpairTimer = setTimeout(disarmUnpair, 4000);
+    return;
+  }
+  disarmUnpair();
+  unpairMs();
+}
+async function unpairMs() {
+  try {
+    const r = await (await fetch("api/appliance/unpair", { method: "POST" })).json();
+    if (r.ok) { showToast("Mini-split unpaired", "ok"); loadAppliance(); }
+    else showToast(r.error || "Unpair failed", "err");
+  } catch (e) { showToast("Unpair failed — dashboard unreachable", "err"); }
 }
 
 async function toggleMsPower() {
@@ -909,7 +976,7 @@ function initMsERanges() {
 
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", batteryHistory: "solar.showBatteryHistory", msEnergy: "solar.showMsEnergy" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", batteryHistory: "solar.showBatteryHistory", msEnergy: "solar.showMsEnergy", minisplit: "solar.showMinisplit" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
@@ -919,18 +986,21 @@ function applySettings() {
   const history = getBool(SETTING.history, true);
   const batteryHistory = getBool(SETTING.batteryHistory, true);
   const msEnergy = getBool(SETTING.msEnergy, true);
+  const minisplit = getBool(SETTING.minisplit, true);
   document.body.classList.toggle("hide-acin", !acin);
   document.body.classList.toggle("hide-battery", !battery);
   document.body.classList.toggle("hide-energy", !energy);
   document.body.classList.toggle("hide-history", !history);
   document.body.classList.toggle("hide-battery-history", !batteryHistory);
   document.body.classList.toggle("hide-msenergy", !msEnergy);
+  document.body.classList.toggle("hide-minisplit", !minisplit);
   $("toggleAcIn").checked = acin;
   $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
   $("toggleHistory").checked = history;
   $("toggleBatteryHistory").checked = batteryHistory;
   $("toggleMsEnergy").checked = msEnergy;
+  $("toggleMinisplit").checked = minisplit;
 }
 
 function initSettings() {
@@ -947,6 +1017,8 @@ function initSettings() {
   bind(SETTING.history, "toggleHistory");
   bind(SETTING.batteryHistory, "toggleBatteryHistory");
   bind(SETTING.msEnergy, "toggleMsEnergy");
+  bind(SETTING.minisplit, "toggleMinisplit");
+  $("unpairMsBtn").addEventListener("click", onUnpairClick);
 }
 
 // ---- per-tile W/A unit toggles (Solar PV / AC Output / AC Input) -----------
@@ -1032,6 +1104,8 @@ initEbarPopup($("msEbars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
 $("ms_power_btn").addEventListener("click", toggleMsPower);
+$("ms_cx_btn").addEventListener("click", connectMs);
+["ms_cx_ip", "ms_cx_id", "ms_cx_key"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") connectMs(); }));
 $("ms_mode_btn").addEventListener("click", (e) => { e.stopPropagation(); toggleModeMenu(); });
 $("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { selectMode(b.dataset.mode); closeModeMenu(); } });
 $("ms_mode_apply").addEventListener("click", (e) => { e.stopPropagation(); applyMode(); });

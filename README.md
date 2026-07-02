@@ -480,7 +480,14 @@ Local reads are AES-encrypted with the device's 16-char **local key**. Extract i
 
 ### Configure
 
-Add to `~/solardash/solardash.env` and restart the service:
+**From the dashboard (easiest):** when no unit is paired, the **Mini-split** tile shows a small
+form — enter the device's LAN IP, device ID, and 16-char local key and click **Connect**. The Pi
+tests the connection, and on success saves it to `data/appliance.json` and starts polling live (no
+restart). To disconnect later, use **Settings → Unpair from Mini-split**, which clears that file and
+returns to the unpaired state. `tinytuya` still needs to be installed on the Pi.
+
+**Or via env** — add to `~/solardash/solardash.env` and restart the service (these seed
+`data/appliance.json` on first run; after that, the file the UI writes is authoritative):
 
 ```ini
 SOLAR_APPLIANCE_ENABLED=1

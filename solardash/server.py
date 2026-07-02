@@ -17,7 +17,7 @@ from fastapi import Body, FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 
 from . import api, cli
-from .appliance_client import ApplianceClient, AppliancePoller
+from .appliance_manager import ApplianceManager
 from .bms_poller import BmsPoller
 from .client import InverterClient, InverterControl
 from .config import Config
@@ -86,20 +86,26 @@ async def lifespan(app: FastAPI):
         bms_poller = BmsPoller(cfg.bms_addresses, interval_s=cfg.bms_interval_s, positions=cfg.bms_positions)
         bms_task = asyncio.create_task(bms_poller.run(bms_stop))
 
-    # Mini-split appliance (EG4/Deye over Wi-Fi, Tuya local v3.3). Off unless fully configured.
-    appliance_poller = None
-    appliance_task = None
-    appliance_stop = asyncio.Event()
+    # Mini-split appliance (EG4/Deye over Wi-Fi, Tuya local v3.3). Managed at runtime: paired from the
+    # UI (persisted to appliance_config_path) and started/stopped live. Existing SOLAR_APPLIANCE_*
+    # env config seeds the connection file on first run.
+    appliance_manager = ApplianceManager(
+        cfg.appliance_config_path,
+        store,
+        interval_s=cfg.appliance_interval_s,
+        version=cfg.appliance_version,
+        temp_divisor=cfg.appliance_temp_divisor,
+    )
+    env_conn = None
     if cfg.appliance_enabled and cfg.appliance_ip and cfg.appliance_device_id and cfg.appliance_local_key:
-        appliance_client = ApplianceClient(
-            cfg.appliance_ip,
-            cfg.appliance_device_id,
-            cfg.appliance_local_key,
-            version=cfg.appliance_version,
-            temp_divisor=cfg.appliance_temp_divisor,
-        )
-        appliance_poller = AppliancePoller(appliance_client, interval_s=cfg.appliance_interval_s, store=store)
-        appliance_task = asyncio.create_task(appliance_poller.run(appliance_stop))
+        env_conn = {
+            "connected": True,
+            "ip": cfg.appliance_ip,
+            "device_id": cfg.appliance_device_id,
+            "local_key": cfg.appliance_local_key,
+            "version": cfg.appliance_version,
+        }
+    await appliance_manager.start(env_conn)
 
     # Advertise over mDNS so the Android app finds us. The serve port comes from uvicorn, not Config,
     # so read it from SOLAR_HTTP_PORT (default 8000) — set it if you serve on a different port.
@@ -111,7 +117,7 @@ async def lifespan(app: FastAPI):
     app.state.cfg = cfg
     app.state.poller = poller
     app.state.bms_poller = bms_poller
-    app.state.appliance_poller = appliance_poller
+    app.state.appliance_manager = appliance_manager
     app.state.inverter_control = inverter_control
     try:
         yield
@@ -128,10 +134,8 @@ async def lifespan(app: FastAPI):
         if bms_task:
             bms_stop.set()
             bms_task.cancel()
-        if appliance_task:
-            appliance_stop.set()
-            appliance_task.cancel()
-        for t in (task, bms_task, appliance_task):
+        await appliance_manager.shutdown()
+        for t in (task, bms_task):
             if t:
                 try:
                     await t
@@ -200,14 +204,15 @@ async def snapshot():
 
 @app.get("/api/appliance")
 async def appliance():
-    return api.appliance_payload(app.state.appliance_poller)
+    mgr = app.state.appliance_manager
+    return api.appliance_payload(mgr.poller, configured=mgr.configured)
 
 
 @app.post("/api/appliance/power")
 async def appliance_power(on: bool = Body(..., embed=True)):
     """Turn the mini-split on/off — read/write control path. A 5-minute cooldown between changes
     is enforced here on the server (anti short-cycle); commands during the lockout are ignored."""
-    ap = app.state.appliance_poller
+    ap = app.state.appliance_manager.poller
     if ap is None:
         return {"ok": False, "error": "mini-split not configured"}
     return await ap.set_power(on)
@@ -216,10 +221,28 @@ async def appliance_power(on: bool = Body(..., embed=True)):
 @app.post("/api/appliance/mode")
 async def appliance_mode(mode: str = Body(..., embed=True)):
     """Set the mini-split's mode (cold/hot/wet/auto/wind) — writes DP 4."""
-    ap = app.state.appliance_poller
+    ap = app.state.appliance_manager.poller
     if ap is None:
         return {"ok": False, "error": "mini-split not configured"}
     return await ap.set_mode(mode)
+
+
+@app.post("/api/appliance/connect")
+async def appliance_connect(
+    ip: str = Body(..., embed=True),
+    device_id: str = Body(..., embed=True),
+    local_key: str = Body(..., embed=True),
+    version: Optional[float] = Body(None, embed=True),
+):
+    """Pair a mini-split from the UI: test the LAN connection, and on success persist it and start
+    polling live. Nothing is saved unless a read succeeds."""
+    return await app.state.appliance_manager.connect(ip, device_id, local_key, version=version)
+
+
+@app.post("/api/appliance/unpair")
+async def appliance_unpair():
+    """Forget the mini-split: stop polling and clear the stored connection (back to unconfigured)."""
+    return await app.state.appliance_manager.unpair()
 
 
 @app.post("/api/inverter/output")
@@ -273,7 +296,8 @@ async def health():
     cfg = app.state.cfg
     poller = app.state.poller
     bp = app.state.bms_poller
-    ap = app.state.appliance_poller
+    mgr = app.state.appliance_manager
+    ap = mgr.poller
     return {
         "ok": True,
         "samples": app.state.store.count(),
@@ -288,7 +312,7 @@ async def health():
             "failures": bp.consecutive_failures if bp else None,
         },
         "appliance": {
-            "enabled": cfg.appliance_enabled,
+            "configured": mgr.configured,
             "last_ts": ap.last_ts if ap else None,
             "failures": ap.consecutive_failures if ap else None,
         },
