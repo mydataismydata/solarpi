@@ -160,11 +160,6 @@
             <span class="leg-sub" id="ms_grid_sub">— %</span>
           </div>
         </div>
-        <div class="ms-modes" id="ms_modes">
-          <button data-mode="cold">Cool</button>
-          <button data-mode="hot">Heat</button>
-          <button data-mode="wet">Dry</button>
-        </div>
       </div>
 
       <!-- 5. Power flow (top) + Battery bank (below) -->
@@ -205,7 +200,20 @@
         <div class="tile-sub" id="temp_sub">AC — · batt —</div>
       </div>
       <div class="tile" data-k="minisplit">
-        <div class="tile-label">Mini-split</div>
+        <div class="tile-head">
+          <div class="tile-label">Mini-split</div>
+          <div class="mode-select" id="ms_mode_select">
+            <button class="mode-pill" id="ms_mode_btn" type="button" disabled aria-haspopup="listbox" aria-expanded="false" title="Set the mode — applies now, or the mode it'll be in next time you turn it on">
+              <span id="ms_mode_label">—</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="mode-menu" id="ms_mode_menu" role="listbox" hidden>
+              <button data-mode="wet" role="option">Dry</button>
+              <button data-mode="cold" role="option">Cold</button>
+              <button data-mode="hot" role="option">Heat</button>
+            </div>
+          </div>
+        </div>
         <div class="tile-value" id="ms_tile_temp">—</div>
         <div class="tile-sub" id="ms_tile_sub">—</div>
       </div>

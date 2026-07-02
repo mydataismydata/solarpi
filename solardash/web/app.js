@@ -172,10 +172,11 @@ async function loadBattery() {
 
 // ---- mini-split (appliance) -----------------------------------------------
 
-const MS_MODE = { cold: "Cool", cool: "Cool", hot: "Heat", heat: "Heat", wind: "Fan", fan: "Fan", fan_only: "Fan", wet: "Dry", dry: "Dry", auto: "Auto" };
+// The mode control's labels (a subset of the unit's DP-4 enum), shown Dry / Cold / Heat.
+const MS_MODE_LABEL = { wet: "Dry", cold: "Cold", hot: "Heat", auto: "Auto", wind: "Fan", fan: "Fan" };
 // Prettify a raw Tuya enum ("fan_only" -> "Fan only", "cooling" -> "Cooling").
 const prettyMs = (s) => (!s ? "" : String(s).split(/[_\s]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(" "));
-const msMode = (m) => MS_MODE[String(m || "").toLowerCase()] || prettyMs(m);
+const msModeLabel = (m) => MS_MODE_LABEL[String(m || "").toLowerCase()] || prettyMs(m) || "—";
 
 const MS_MAX = 3000; // dial + leg-bar scale (watts) for the mini-split's total draw
 
@@ -200,18 +201,41 @@ function syncPowerBtn() {
 
 const isCooling = (m) => m === "cold" || m === "wet";
 
-// Render the mode selector: highlight the current mode, and during the reverse-gate disable ONLY
-// the buttons that would cross the heat/cool boundary (cool/dry <-> heat); cool<->dry stays free.
+// Render the mode control: the pill shows the current/pending mode (even when the unit is off, so
+// you can pre-set what it'll run when next turned on), the menu highlights it, and during the
+// reverse-gate we disable ONLY the options that cross the heat/cool boundary (cool/dry <-> heat);
+// cool<->dry stays free.
 function renderModes() {
+  const m = msCurrentMode ? String(msCurrentMode).toLowerCase() : null;
+  const btn = $("ms_mode_btn");
+  $("ms_mode_label").textContent = msApplianceAvailable ? msModeLabel(m) : "—";
+  const tone = (m === "cold" || m === "hot" || m === "wet") ? m : "";
+  btn.className = "mode-pill" + (tone ? " " + tone : "");
+  btn.disabled = !msApplianceAvailable;
+
   const locked = msModeCooldownRemaining > 0;
-  $("ms_modes").querySelectorAll("button").forEach((b) => {
-    const m = b.dataset.mode;
-    b.classList.toggle("active", m === msCurrentMode);
-    const crosses = locked && msCurrentMode &&
-      ((isCooling(msCurrentMode) && m === "hot") || (msCurrentMode === "hot" && isCooling(m)));
+  $("ms_mode_menu").querySelectorAll("button").forEach((b) => {
+    const bm = b.dataset.mode;
+    b.classList.toggle("active", bm === m);
+    const crosses = locked && m &&
+      ((isCooling(m) && bm === "hot") || (m === "hot" && isCooling(bm)));
     b.disabled = !msApplianceAvailable || msModeBusy || crosses;
     b.title = crosses ? `Heat/cool switch locked ${mmss(msModeCooldownRemaining)} — compressor protection` : "";
   });
+}
+
+function closeModeMenu() {
+  $("ms_mode_select").classList.remove("open");
+  $("ms_mode_menu").hidden = true;
+  $("ms_mode_btn").setAttribute("aria-expanded", "false");
+}
+
+function toggleModeMenu() {
+  if ($("ms_mode_btn").disabled) return;
+  const opening = $("ms_mode_menu").hidden;
+  $("ms_mode_select").classList.toggle("open", opening);
+  $("ms_mode_menu").hidden = !opening;
+  $("ms_mode_btn").setAttribute("aria-expanded", String(opening));
 }
 
 function updateAppliance(d) {
@@ -264,9 +288,7 @@ function updateAppliance(d) {
   $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
   if (on) {
     const set = d.temp_set_c != null ? `${Math.round(d.temp_set_c)}°C` : "—";
-    const bits = [`set ${set}`];
-    const mode = msMode(d.mode);
-    if (mode) bits.push(mode);
+    const bits = [`set ${set}`];  // mode now lives in the dropdown above, so it's not repeated here
     if (d.fan_speed) bits.push(`Fan ${prettyMs(d.fan_speed)}`);
     if (d.fault_labels && d.fault_labels.length) bits.push(`⚠ ${d.fault_labels.map(prettyMs).join(", ")}`);
     $("ms_tile_sub").textContent = bits.join(" · ");
@@ -321,7 +343,7 @@ async function setMsMode(mode) {
       body: JSON.stringify({ mode }),
     })).json();
     if (r.ok) {
-      showToast(`Mode set to ${msMode(mode)}`, "ok");
+      showToast(`Mode set to ${msModeLabel(mode)}`, "ok");
     } else if (r.cooldown) {
       msModeCooldownRemaining = r.retry_after || msModeCooldownRemaining;
       showToast(`Heat/cool switch locked ${mmss(r.retry_after || 0)} — compressor protection`, "err");
@@ -829,7 +851,10 @@ initEbarPopup($("ebars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
 $("ms_power_btn").addEventListener("click", toggleMsPower);
-$("ms_modes").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) setMsMode(b.dataset.mode); });
+$("ms_mode_btn").addEventListener("click", (e) => { e.stopPropagation(); toggleModeMenu(); });
+$("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { setMsMode(b.dataset.mode); closeModeMenu(); } });
+document.addEventListener("click", (e) => { if (!e.target.closest("#ms_mode_select")) closeModeMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModeMenu(); });
 initSettings();
 initUnitToggles();
 loadBattery();
