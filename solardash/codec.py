@@ -12,6 +12,7 @@ from typing import List, Optional
 V5_START = 0xA5
 V5_END = 0x15
 MODBUS_READ_HOLDING = 0x03
+MODBUS_WRITE_SINGLE = 0x06
 
 
 def crc16_modbus(data: bytes) -> int:
@@ -60,6 +61,41 @@ def modbus_parse_holding(frame: bytes, expected_slave: int) -> Optional[List[int
     if got != crc16_modbus(frame[:crc_start]):
         return None
     return [(frame[3 + 2 * i] << 8) | frame[3 + 2 * i + 1] for i in range(byte_count // 2)]
+
+
+def modbus_write_single(slave: int, reg: int, value: int) -> bytes:
+    """Build a Modbus-RTU 'write single register' (fn 0x06) request `[slave][0x06][regHi][regLo]
+    [valHi][valLo][crcLo][crcHi]`. The SRNE inverter supports fn 0x06 (protocol V2.07 sec. 3)."""
+    body = bytes(
+        [
+            slave & 0xFF,
+            MODBUS_WRITE_SINGLE,
+            (reg >> 8) & 0xFF,
+            reg & 0xFF,
+            (value >> 8) & 0xFF,
+            value & 0xFF,
+        ]
+    )
+    crc = crc16_modbus(body)
+    return body + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
+
+
+def modbus_parse_write_echo(frame: bytes, expected_slave: int, expected_reg: int) -> Optional[int]:
+    """Validate a fn-0x06 write echo. On success the inverter mirrors the request verbatim, so
+    return the written value; return None on any malformed / wrong-slave / wrong-register / bad-CRC
+    frame (a 0x86 function byte signals a Modbus exception -> rejected)."""
+    if len(frame) < 8:
+        return None
+    if frame[0] != expected_slave:
+        return None
+    if frame[1] != MODBUS_WRITE_SINGLE:
+        return None
+    if ((frame[2] << 8) | frame[3]) != expected_reg:
+        return None
+    got = frame[6] | (frame[7] << 8)
+    if got != crc16_modbus(frame[:6]):
+        return None
+    return (frame[4] << 8) | frame[5]
 
 
 def v5_encode(serial: int, sequence: int, modbus_frame: bytes) -> bytes:

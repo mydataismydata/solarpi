@@ -39,6 +39,9 @@ let msModeBusy = false;       // a mode change is in flight
 let msCurrentMode = null;     // the unit's current mode (for the heat<->cool gate)
 let msPendingMode = null;     // a mode the user picked but hasn't applied yet (shows an Apply button)
 let msModeCooldownRemaining = 0; // seconds left in the cool/dry<->heat lockout
+let invControlEnabled = false; // server exposes AC-output control (SOLAR_INVERTER_CONTROL)
+let invOutputOn = null;        // latest AC-output state (true/false/null), inferred from output voltage
+let invOutputBusy = false;     // an output on/off command is in flight
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -86,6 +89,7 @@ function updateTiles(d) {
   setPill($("load_pill"), `${fmt(d.output_frequency, 2)} Hz`, "");
   leg("l1", d.load_power, d.output_voltage, d.load_current, 2000, 16, loadA);
   leg("l2", d.load_l2_power, d.output_l2_voltage, d.load_l2_current, 2000, 16, loadA);
+  renderAcOutBtn(d);
 
   // AC Input (grid / generator). grid_power/current aren't decoded registers yet, so the wheel
   // reads 0 until one is mapped; the L1/L2 voltage + frequency below are live.
@@ -577,6 +581,80 @@ function onBatteryChartClick(e) {
   showPopupAt(html, e.clientX, e.clientY);
 }
 
+// ---- inverter AC-output control (emergency shutoff) -----------------------
+// Opt-in on the server (SOLAR_INVERTER_CONTROL). Turning ON is a direct click (recovery);
+// turning OFF opens a modal whose confirm button must be held ~2s (writes SRNE 0xDF00).
+
+const ACOUT_HOLD_MS = 2000;
+let _acoutHoldTimer = null;
+
+// Reflect the three state vars onto the power button (mirrors syncPowerBtn for the mini-split).
+function syncAcOutBtn() {
+  const btn = $("acout_power_btn");
+  btn.hidden = !invControlEnabled;
+  if (!invControlEnabled) return;
+  btn.classList.toggle("on", invOutputOn === true);
+  btn.classList.toggle("busy", invOutputBusy);
+  btn.disabled = invOutputBusy;
+  btn.title = invOutputOn === false ? "Turn the AC output ON" : "Turn the AC output OFF";
+}
+
+function renderAcOutBtn(d) {
+  invControlEnabled = d.inverter_control === true;
+  invOutputOn = d.output_on;  // true / false / null (unknown)
+  syncAcOutBtn();
+}
+
+function onAcOutClick() {
+  if (invOutputBusy) return;
+  if (invOutputOn === false) setAcOutput(true);  // OFF -> ON is the safe recovery direction: direct
+  else openAcOutModal();                         // ON (or unknown) -> OFF is gated by hold-to-confirm
+}
+
+async function setAcOutput(on) {
+  if (invOutputBusy) return;
+  invOutputBusy = true;
+  syncAcOutBtn();
+  try {
+    const r = await (await fetch("api/inverter/output", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on }),
+    })).json();
+    if (r.ok) {
+      invOutputOn = on;
+      showToast(on ? "AC output turned on" : "AC output turned OFF", on ? "ok" : "err");
+    } else if (r.cooldown) {
+      showToast(`Locked ${r.retry_after || 0}s — try again`, "err");
+    } else {
+      showToast(r.error || "Command didn't go through — try again", "err");
+    }
+  } catch (e) {
+    showToast("Command failed — dashboard unreachable", "err");
+  } finally {
+    invOutputBusy = false;
+    syncAcOutBtn();
+    loadCurrent();
+  }
+}
+
+function openAcOutModal() { $("acout_modal").hidden = false; }
+function closeAcOutModal() { cancelAcOutHold(); $("acout_modal").hidden = true; }
+
+function startAcOutHold() {
+  const fill = $("acout_hold_fill");
+  fill.style.transition = `width ${ACOUT_HOLD_MS}ms linear`;
+  fill.style.width = "100%";
+  _acoutHoldTimer = setTimeout(() => { _acoutHoldTimer = null; closeAcOutModal(); setAcOutput(false); }, ACOUT_HOLD_MS);
+}
+
+function cancelAcOutHold() {
+  if (_acoutHoldTimer) { clearTimeout(_acoutHoldTimer); _acoutHoldTimer = null; }
+  const fill = $("acout_hold_fill");
+  fill.style.transition = "width 0.12s ease";
+  fill.style.width = "0%";
+}
+
 // ---- snapshot (camera button) ---------------------------------------------
 
 let _toastTimer = null;
@@ -890,6 +968,12 @@ $("ms_mode_btn").addEventListener("click", (e) => { e.stopPropagation(); toggleM
 $("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { selectMode(b.dataset.mode); closeModeMenu(); } });
 $("ms_mode_apply").addEventListener("click", (e) => { e.stopPropagation(); applyMode(); });
 $("ms_mode_cancel").addEventListener("click", (e) => { e.stopPropagation(); cancelMode(); });
+$("acout_power_btn").addEventListener("click", onAcOutClick);
+$("acout_modal_cancel").addEventListener("click", closeAcOutModal);
+$("acout_modal").addEventListener("click", (e) => { if (e.target === $("acout_modal")) closeAcOutModal(); });
+$("acout_modal_confirm").addEventListener("pointerdown", (e) => { e.preventDefault(); startAcOutHold(); });
+["pointerup", "pointerleave", "pointercancel"].forEach((ev) => $("acout_modal_confirm").addEventListener(ev, cancelAcOutHold));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAcOutModal(); });
 document.addEventListener("click", (e) => { if (!e.target.closest("#ms_mode_select")) closeModeMenu(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModeMenu(); });
 initSettings();

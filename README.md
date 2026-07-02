@@ -335,6 +335,10 @@ default (see `solardash/config.py`); a real deployment usually sets:
 SOLAR_INVERTER_IP=192.168.#.#
 SOLAR_INVERTER_SERIAL=1234567890     # the serial printed on the dongle
 SOLAR_POLL_INTERVAL=10
+# Remote AC-output on/off (writes SRNE register 0xDF00). OFF by default — set to 1 to expose
+# the guarded power button on the AC Output panel. It cuts the WHOLE inverter output, so only
+# enable it if the Pi + dongle are on a UPS (otherwise a remote OFF also kills the dashboard).
+SOLAR_INVERTER_CONTROL=0
 
 # Battery packs (JBD BMS over BLE) — comma-separated MACs, optional =name.
 # Find the MACs with: deploy/ble_probe.py

@@ -85,6 +85,9 @@
           <div class="head-tools">
             <div class="unit-toggle" data-gauge="load"><button data-u="W">W</button><button data-u="A">A</button></div>
             <span class="pill" id="load_pill">— Hz</span>
+            <button class="ms-power" id="acout_power_btn" hidden aria-label="Toggle AC output power" title="Turn the AC output on/off">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+            </button>
           </div>
         </div>
         <div id="loadGauge"></div>
@@ -293,6 +296,20 @@
       <div class="legend" id="batteryLegend"></div>
     </section>
   </main>
+
+  <div class="modal-overlay" id="acout_modal" hidden>
+    <div class="modal">
+      <div class="modal-title">Turn OFF the AC output?</div>
+      <div class="modal-body">This immediately cuts mains power to <b>everything</b> on the inverter's AC output. Hold the button to confirm.</div>
+      <div class="modal-actions">
+        <button class="modal-cancel" id="acout_modal_cancel" type="button">Cancel</button>
+        <button class="modal-hold" id="acout_modal_confirm" type="button" aria-label="Hold to turn the AC output off">
+          <span class="modal-hold-fill" id="acout_hold_fill"></span>
+          <span class="modal-hold-label">Hold to turn off</span>
+        </button>
+      </div>
+    </div>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
 

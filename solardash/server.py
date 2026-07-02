@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from . import api, cli
 from .appliance_client import ApplianceClient, AppliancePoller
 from .bms_poller import BmsPoller
-from .client import InverterClient
+from .client import InverterClient, InverterControl
 from .config import Config
 from .db import TimeSeriesStore
 from .faults import FaultCatalog
@@ -72,6 +72,9 @@ async def lifespan(app: FastAPI):
     catalog = FaultCatalog.load()
     client = InverterClient(cfg.inverter_ip, cfg.inverter_serial, port=cfg.inverter_port)
     poller = Poller(client, store, interval_s=cfg.poll_interval_s)
+    # Shares the client (and thus its socket lock) with the poller, so an output command and a poll
+    # read never talk to the dongle at once. Endpoint stays gated on cfg.inverter_control_enabled.
+    inverter_control = InverterControl(client)
 
     stop = asyncio.Event()
     task = asyncio.create_task(poller.run(stop))
@@ -109,6 +112,7 @@ async def lifespan(app: FastAPI):
     app.state.poller = poller
     app.state.bms_poller = bms_poller
     app.state.appliance_poller = appliance_poller
+    app.state.inverter_control = inverter_control
     try:
         yield
     finally:
@@ -161,7 +165,10 @@ def _battery_capacity_wh() -> float:
 @app.get("/api/current")
 async def current():
     return api.current_payload(
-        app.state.store, app.state.catalog, battery_capacity_wh=_battery_capacity_wh()
+        app.state.store,
+        app.state.catalog,
+        battery_capacity_wh=_battery_capacity_wh(),
+        inverter_control=app.state.cfg.inverter_control_enabled,
     )
 
 
@@ -213,6 +220,15 @@ async def appliance_mode(mode: str = Body(..., embed=True)):
     if ap is None:
         return {"ok": False, "error": "mini-split not configured"}
     return await ap.set_mode(mode)
+
+
+@app.post("/api/inverter/output")
+async def inverter_output(on: bool = Body(..., embed=True)):
+    """Turn the inverter's AC output on/off (SRNE 0xDF00 write). Opt-in: returns an error unless
+    SOLAR_INVERTER_CONTROL is enabled. A short cooldown guards against accidental double-fire."""
+    if not app.state.cfg.inverter_control_enabled:
+        return {"ok": False, "error": "inverter control disabled"}
+    return await app.state.inverter_control.set_output(on)
 
 
 @app.get("/api/history")

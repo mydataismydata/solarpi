@@ -59,6 +59,9 @@ class Config:
     inverter_serial: int = 1234567890
     inverter_port: int = 8899
     poll_interval_s: float = 10.0
+    # Remote AC-output on/off control (SRNE 0xDF00 write). OFF by default: the whole feature — API
+    # endpoint and dashboard button — stays hidden until you set SOLAR_INVERTER_CONTROL=1 on the Pi.
+    inverter_control_enabled: bool = False
     db_path: str = "data/solar.sqlite"
     retention_days: int = 0  # 0 = keep forever; >0 prunes samples older than N days
     # Usable battery bank capacity (kWh) for the time-to-full/empty estimate. Used only as a
@@ -86,6 +89,7 @@ class Config:
             inverter_ip=os.environ.get("SOLAR_INVERTER_IP", cls.inverter_ip),
             inverter_serial=int(os.environ.get("SOLAR_INVERTER_SERIAL", cls.inverter_serial)),
             inverter_port=int(os.environ.get("SOLAR_INVERTER_PORT", cls.inverter_port)),
+            inverter_control_enabled=os.environ.get("SOLAR_INVERTER_CONTROL", "0") not in ("0", "false", "False"),
             poll_interval_s=float(os.environ.get("SOLAR_POLL_INTERVAL", cls.poll_interval_s)),
             db_path=os.environ.get("SOLAR_DB_PATH", cls.db_path),
             retention_days=int(os.environ.get("SOLAR_RETENTION_DAYS", cls.retention_days)),

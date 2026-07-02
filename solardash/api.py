@@ -39,6 +39,7 @@ def current_payload(
     store: TimeSeriesStore,
     catalog: Optional[FaultCatalog] = None,
     battery_capacity_wh: Optional[float] = None,
+    inverter_control: bool = False,
 ) -> Dict[str, object]:
     """Latest snapshot for the live tiles, with faults annotated and a battery ETA."""
     latest = store.latest()
@@ -56,6 +57,11 @@ def current_payload(
         i = out.get(f"pv{n}_current")
         out[f"pv{n}_power"] = round(v * i, 1) if (v is not None and i is not None) else None
     out["battery_eta_minutes"], out["battery_eta_kind"] = _battery_eta(out, battery_capacity_wh)
+    # Whether the remote AC-output control is enabled, and whether the output is currently live
+    # (inferred from L1 output voltage) so the UI can show/label the power button.
+    out["inverter_control"] = inverter_control
+    ov = out.get("output_voltage")
+    out["output_on"] = None if ov is None else ov > 50
     return out
 
 

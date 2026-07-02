@@ -126,6 +126,19 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .mode-cancel:hover:not(:disabled) { color: var(--txt); border-color: var(--line-strong); }
 .mode-cancel:disabled { opacity: 0.5; cursor: default; }
 .mode-cancel[hidden] { display: none; }
+
+/* AC-output shutoff confirmation — a modal whose confirm button must be held ~2s to fire */
+.modal-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,0.55); }
+.modal-overlay[hidden] { display: none; }
+.modal { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
+.modal-title { font-size: 16px; font-weight: 700; color: var(--txt); margin-bottom: 8px; }
+.modal-body { font-size: 13.5px; color: var(--txt2); line-height: 1.5; margin-bottom: 18px; }
+.modal-actions { display: flex; gap: 10px; }
+.modal-cancel { flex: 0 0 auto; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--txt2); font-weight: 600; font-size: 13.5px; cursor: pointer; font-family: var(--sans); }
+.modal-cancel:hover { color: var(--txt); border-color: var(--line-strong); }
+.modal-hold { position: relative; flex: 1; overflow: hidden; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--fault); background: rgba(248,113,113,0.10); color: var(--txt); font-weight: 700; font-size: 13.5px; cursor: pointer; font-family: var(--sans); user-select: none; touch-action: none; }
+.modal-hold-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--fault); }
+.modal-hold-label { position: relative; z-index: 1; }
 .mode-pill svg { width: 13px; height: 13px; opacity: 0.7; transition: transform 0.15s ease; }
 .mode-pill.cold { color: var(--accent); background: rgba(34,211,238,0.12); }
 .mode-pill.hot { color: var(--discharge); background: rgba(251,191,36,0.12); }
