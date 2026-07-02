@@ -122,6 +122,10 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .mode-apply:hover:not(:disabled) { filter: brightness(1.08); }
 .mode-apply:disabled { opacity: 0.5; cursor: default; }
 .mode-apply[hidden] { display: none; }
+.mode-cancel { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--txt3); white-space: nowrap; cursor: pointer; font-family: var(--sans); }
+.mode-cancel:hover:not(:disabled) { color: var(--txt); border-color: var(--line-strong); }
+.mode-cancel:disabled { opacity: 0.5; cursor: default; }
+.mode-cancel[hidden] { display: none; }
 .mode-pill svg { width: 13px; height: 13px; opacity: 0.7; transition: transform 0.15s ease; }
 .mode-pill.cold { color: var(--accent); background: rgba(34,211,238,0.12); }
 .mode-pill.hot { color: var(--discharge); background: rgba(251,191,36,0.12); }

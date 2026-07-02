@@ -219,9 +219,9 @@ function renderModes() {
   btn.className = "mode-pill" + (tone ? " " + tone : "") + (dirty ? " pending" : "");
   btn.disabled = !msApplianceAvailable;
 
-  const apply = $("ms_mode_apply");
-  apply.hidden = !(dirty && msApplianceAvailable);
-  apply.disabled = msModeBusy;
+  const apply = $("ms_mode_apply"), cancel = $("ms_mode_cancel");
+  apply.hidden = cancel.hidden = !(dirty && msApplianceAvailable);
+  apply.disabled = cancel.disabled = msModeBusy;
 
   const locked = msModeCooldownRemaining > 0;
   $("ms_mode_menu").querySelectorAll("button").forEach((b) => {
@@ -259,6 +259,13 @@ function selectMode(mode) {
 function applyMode() {
   if (!msPendingMode || msModeBusy) return;
   setMsMode(msPendingMode);
+}
+
+// Discard the staged change without sending anything (the Cancel button).
+function cancelMode() {
+  if (msModeBusy) return;
+  msPendingMode = null;
+  renderModes();
 }
 
 function updateAppliance(d) {
@@ -882,6 +889,7 @@ $("ms_power_btn").addEventListener("click", toggleMsPower);
 $("ms_mode_btn").addEventListener("click", (e) => { e.stopPropagation(); toggleModeMenu(); });
 $("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { selectMode(b.dataset.mode); closeModeMenu(); } });
 $("ms_mode_apply").addEventListener("click", (e) => { e.stopPropagation(); applyMode(); });
+$("ms_mode_cancel").addEventListener("click", (e) => { e.stopPropagation(); cancelMode(); });
 document.addEventListener("click", (e) => { if (!e.target.closest("#ms_mode_select")) closeModeMenu(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModeMenu(); });
 initSettings();
