@@ -33,14 +33,6 @@ let msActivePeriod = "hour"; // selected range for the mini-split energy chart
 let msEnergyView = null;     // { period, rows } currently displayed for the mini-split energy chart
 let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
 let lastCurrent = null; // last /api/current payload, so the W/A toggle can re-render instantly
-let msPowerOn = false;        // latest mini-split on/off state
-let msCooldownRemaining = 0;  // seconds left in the server-enforced power lockout
-let msPowerBusy = false;      // a power command is in flight
-let msApplianceAvailable = false;
-let msModeBusy = false;       // a mode change is in flight
-let msCurrentMode = null;     // the unit's current mode (for the heat<->cool gate)
-let msPendingMode = null;     // a mode the user picked but hasn't applied yet (shows an Apply button)
-let msModeCooldownRemaining = 0; // seconds left in the cool/dry<->heat lockout
 let invControlEnabled = false; // server exposes AC-output control (SOLAR_INVERTER_CONTROL)
 let invOutputOn = null;        // latest AC-output state (true/false/null), inferred from output voltage
 let invOutputBusy = false;     // an output on/off command is in flight
@@ -187,96 +179,9 @@ const msModeLabel = (m) => MS_MODE_LABEL[String(m || "").toLowerCase()] || prett
 
 const MS_MAX = 3000; // dial + leg-bar scale (watts) for the mini-split's total draw
 
-const mmss = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
-
-// Single source of truth for the power button's look: on/off, in-flight, or locked (server cooldown).
-function syncPowerBtn() {
-  const btn = $("ms_power_btn"), lbl = $("ms_cooldown");
-  const locked = msCooldownRemaining > 0;
-  btn.classList.toggle("on", msPowerOn && !locked);
-  btn.classList.toggle("busy", msPowerBusy);
-  btn.disabled = !msApplianceAvailable || msPowerBusy || locked;
-  if (locked) {
-    lbl.textContent = mmss(msCooldownRemaining);
-    lbl.hidden = false;
-    btn.title = `Locked ${mmss(msCooldownRemaining)} — compressor protection`;
-  } else {
-    lbl.hidden = true;
-    btn.title = "Turn the mini-split on/off";
-  }
-}
-
-const isCooling = (m) => m === "cold" || m === "wet";
-
-// Render the mode control. Picking a mode only stages it (msPendingMode); the pill then shows the
-// pending choice with a dashed ring and an Apply button appears — nothing is sent until Apply. The
-// pill shows the mode even when the unit is off, so you can pre-set what it'll run when next turned
-// on. During the reverse-gate we disable ONLY the options that cross the heat/cool boundary
-// (cool/dry <-> heat) relative to the unit's actual mode; cool<->dry stays free.
-function renderModes() {
-  const cur = msCurrentMode ? String(msCurrentMode).toLowerCase() : null;
-  const pend = msPendingMode ? String(msPendingMode).toLowerCase() : null;
-  const sel = pend || cur;                 // what the control currently shows
-  const dirty = !!pend && pend !== cur;    // a staged change waiting to be applied
-
-  const btn = $("ms_mode_btn");
-  $("ms_mode_label").textContent = msApplianceAvailable ? msModeLabel(sel) : "—";
-  const tone = (sel === "cold" || sel === "hot" || sel === "wet") ? sel : "";
-  btn.className = "mode-pill" + (tone ? " " + tone : "") + (dirty ? " pending" : "");
-  btn.disabled = !msApplianceAvailable;
-
-  const apply = $("ms_mode_apply"), cancel = $("ms_mode_cancel");
-  apply.hidden = cancel.hidden = !(dirty && msApplianceAvailable);
-  apply.disabled = cancel.disabled = msModeBusy;
-
-  const locked = msModeCooldownRemaining > 0;
-  $("ms_mode_menu").querySelectorAll("button").forEach((b) => {
-    const bm = b.dataset.mode;
-    b.classList.toggle("active", bm === sel);
-    const crosses = locked && cur &&
-      ((isCooling(cur) && bm === "hot") || (cur === "hot" && isCooling(bm)));
-    b.disabled = !msApplianceAvailable || msModeBusy || crosses;
-    b.title = crosses ? `Heat/cool switch locked ${mmss(msModeCooldownRemaining)} — compressor protection` : "";
-  });
-}
-
-function closeModeMenu() {
-  $("ms_mode_select").classList.remove("open");
-  $("ms_mode_menu").hidden = true;
-  $("ms_mode_btn").setAttribute("aria-expanded", "false");
-}
-
-function toggleModeMenu() {
-  if ($("ms_mode_btn").disabled) return;
-  const opening = $("ms_mode_menu").hidden;
-  $("ms_mode_select").classList.toggle("open", opening);
-  $("ms_mode_menu").hidden = !opening;
-  $("ms_mode_btn").setAttribute("aria-expanded", String(opening));
-}
-
-// Stage a mode (don't send it). Picking the mode the unit is already in clears the pending change.
-function selectMode(mode) {
-  const cur = msCurrentMode ? String(msCurrentMode).toLowerCase() : null;
-  msPendingMode = (mode === cur) ? null : mode;
-  renderModes();
-}
-
-// Actually send the staged mode change (the Apply button).
-function applyMode() {
-  if (!msPendingMode || msModeBusy) return;
-  setMsMode(msPendingMode);
-}
-
-// Discard the staged change without sending anything (the Cancel button).
-function cancelMode() {
-  if (msModeBusy) return;
-  msPendingMode = null;
-  renderModes();
-}
-
 function updateAppliance(d) {
-  // Pairing state: show the connect form (in the tile) when no unit is paired; the live readout and
-  // the Settings "Unpair" action appear once it is. `configured` = paired (vs. connecting/no data).
+  // Pairing state: connect form when no unit is paired; the live readout + the Settings "Unpair"
+  // action once it is. Solar Pi only READS the mini-split — no on/off or mode control here.
   const configured = !!(d && d.configured);
   $("ms_connect").hidden = configured;
   $("ms_live").hidden = !configured;
@@ -293,13 +198,6 @@ function updateAppliance(d) {
     }
     $("ms_tile_temp").textContent = "—";
     $("ms_tile_sub").textContent = d ? "not configured" : "waiting…";
-    msApplianceAvailable = false;
-    msCooldownRemaining = 0;
-    syncPowerBtn();
-    msCurrentMode = null;
-    msPendingMode = null;
-    msModeCooldownRemaining = 0;
-    renderModes();
     return;
   }
   const solar = Math.max(0, d.solar_power ?? 0);
@@ -320,21 +218,14 @@ function updateAppliance(d) {
   const on = d.power === true;
   const work = prettyMs(d.work_status);
   setPill($("ms_pill"), on ? (work || "On") : "Off", on ? "accent" : "");
-  msPowerOn = on;
-  msApplianceAvailable = true;
-  msCooldownRemaining = d.power_cooldown || 0;
-  syncPowerBtn();
-  msCurrentMode = d.mode;
-  // once the unit reports the mode we staged, the change has landed — drop the pending state
-  if (msPendingMode && String(msPendingMode).toLowerCase() === String(d.mode || "").toLowerCase()) msPendingMode = null;
-  msModeCooldownRemaining = d.mode_cooldown || 0;
-  renderModes();
 
-  // secondary tile: current room temperature + the unit's settings
+  // secondary tile: current room temperature + the unit's settings (all read-only)
   $("ms_tile_temp").textContent = tempCF(d.temp_current_c);
   if (on) {
     const set = d.temp_set_c != null ? `${Math.round(d.temp_set_c)}°C` : "—";
-    const bits = [`set ${set}`];  // mode now lives in the dropdown above, so it's not repeated here
+    const bits = [`set ${set}`];
+    const mode = msModeLabel(d.mode);
+    if (mode && mode !== "—") bits.push(mode);
     if (d.fan_speed) bits.push(`Fan ${prettyMs(d.fan_speed)}`);
     if (d.fault_labels && d.fault_labels.length) bits.push(`⚠ ${d.fault_labels.map(prettyMs).join(", ")}`);
     $("ms_tile_sub").textContent = bits.join(" · ");
@@ -407,64 +298,6 @@ async function unpairMs() {
     if (r.ok) { showToast("Mini-split unpaired", "ok"); loadAppliance(); }
     else showToast(r.error || "Unpair failed", "err");
   } catch (e) { showToast("Unpair failed — dashboard unreachable", "err"); }
-}
-
-async function toggleMsPower() {
-  if ($("ms_power_btn").disabled) return;
-  const target = !msPowerOn;
-  msPowerBusy = true;
-  syncPowerBtn();
-  try {
-    const r = await (await fetch("api/appliance/power", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ on: target }),
-    })).json();
-    if (r.ok) {
-      msPowerOn = target;
-      showToast(target ? "Mini-split turned on" : "Mini-split turned off", "ok");
-    } else if (r.cooldown) {
-      msCooldownRemaining = r.retry_after || msCooldownRemaining;
-      showToast(`Locked ${mmss(r.retry_after || 0)} — compressor protection`, "err");
-    } else {
-      showToast(r.error || "Command didn't go through — try again", "err");
-    }
-  } catch (e) {
-    showToast("Command failed — dashboard unreachable", "err");
-  } finally {
-    msPowerBusy = false;
-    syncPowerBtn();
-    loadAppliance();
-  }
-}
-
-async function setMsMode(mode) {
-  if (msModeBusy) return;
-  msModeBusy = true;
-  renderModes();
-  try {
-    const r = await (await fetch("api/appliance/mode", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode }),
-    })).json();
-    if (r.ok) {
-      msCurrentMode = mode;  // optimistic — the next poll will confirm
-      msPendingMode = null;  // applied — clear the staged change
-      showToast(`Mode set to ${msModeLabel(mode)}`, "ok");
-    } else if (r.cooldown) {
-      msModeCooldownRemaining = r.retry_after || msModeCooldownRemaining;
-      showToast(`Heat/cool switch locked ${mmss(r.retry_after || 0)} — compressor protection`, "err");
-    } else {
-      showToast(r.error || "Mode change didn't go through — try again", "err");
-    }
-  } catch (e) {
-    showToast("Command failed — dashboard unreachable", "err");
-  } finally {
-    msModeBusy = false;
-    renderModes();
-    loadAppliance();
-  }
 }
 
 // ---- history chart --------------------------------------------------------
@@ -657,7 +490,7 @@ function onBatteryChartClick(e) {
 const ACOUT_HOLD_MS = 2000;
 let _acoutHoldTimer = null;
 
-// Reflect the three state vars onto the power button (mirrors syncPowerBtn for the mini-split).
+// Reflect the three state vars onto the AC-output power button.
 function syncAcOutBtn() {
   const btn = $("acout_power_btn");
   btn.hidden = !invControlEnabled;
@@ -1103,21 +936,14 @@ initMsERanges();
 initEbarPopup($("msEbars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 $("snapBtn").addEventListener("click", takeSnapshot);
-$("ms_power_btn").addEventListener("click", toggleMsPower);
 $("ms_cx_btn").addEventListener("click", connectMs);
 ["ms_cx_ip", "ms_cx_id", "ms_cx_key"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") connectMs(); }));
-$("ms_mode_btn").addEventListener("click", (e) => { e.stopPropagation(); toggleModeMenu(); });
-$("ms_mode_menu").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) { selectMode(b.dataset.mode); closeModeMenu(); } });
-$("ms_mode_apply").addEventListener("click", (e) => { e.stopPropagation(); applyMode(); });
-$("ms_mode_cancel").addEventListener("click", (e) => { e.stopPropagation(); cancelMode(); });
 $("acout_power_btn").addEventListener("click", onAcOutClick);
 $("acout_modal_cancel").addEventListener("click", closeAcOutModal);
 $("acout_modal").addEventListener("click", (e) => { if (e.target === $("acout_modal")) closeAcOutModal(); });
 $("acout_modal_confirm").addEventListener("pointerdown", (e) => { e.preventDefault(); startAcOutHold(); });
 ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => $("acout_modal_confirm").addEventListener(ev, cancelAcOutHold));
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAcOutModal(); });
-document.addEventListener("click", (e) => { if (!e.target.closest("#ms_mode_select")) closeModeMenu(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModeMenu(); });
 initSettings();
 initUnitToggles();
 loadBattery();
@@ -1131,10 +957,6 @@ loadEnergy(activePeriod);
 loadMsEnergy(msActivePeriod);
 setInterval(loadCurrent, 5000);
 setInterval(loadAppliance, 5000);
-setInterval(() => {
-  if (msCooldownRemaining > 0) { msCooldownRemaining = Math.max(0, msCooldownRemaining - 1); syncPowerBtn(); }
-  if (msModeCooldownRemaining > 0) { msModeCooldownRemaining = Math.max(0, msModeCooldownRemaining - 1); renderModes(); }
-}, 1000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
 setInterval(() => loadBatteryHistory(activeBattWin), 30000);

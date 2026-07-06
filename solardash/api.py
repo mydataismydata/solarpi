@@ -233,6 +233,4 @@ def appliance_payload(poller, configured: bool = False) -> Dict[str, object]:
         "solar_percent": s.solar_percent,
         "grid_percent": s.grid_percent,
         "raw_dps": poller.raw_dps,
-        "power_cooldown": poller.power_cooldown_remaining() if hasattr(poller, "power_cooldown_remaining") else 0,
-        "mode_cooldown": poller.mode_reverse_cooldown_remaining() if hasattr(poller, "mode_reverse_cooldown_remaining") else 0,
     }

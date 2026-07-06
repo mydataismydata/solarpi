@@ -146,10 +146,6 @@
           <span class="panel-title">Mini-split</span>
           <div class="head-tools">
             <span class="pill" id="ms_pill">—</span>
-            <span class="ms-cooldown" id="ms_cooldown" hidden></span>
-            <button class="ms-power" id="ms_power_btn" disabled aria-label="Toggle mini-split power" title="Turn the mini-split on/off">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-            </button>
           </div>
         </div>
         <div id="msGauge"></div>
@@ -209,22 +205,7 @@
       </div>
       <div class="tile" data-k="minisplit">
         <div id="ms_live">
-          <div class="tile-head">
-            <div class="tile-label">Mini-split</div>
-            <div class="mode-select" id="ms_mode_select">
-              <button class="mode-cancel" id="ms_mode_cancel" type="button" hidden>Cancel</button>
-              <button class="mode-apply" id="ms_mode_apply" type="button" hidden>Apply</button>
-              <button class="mode-pill" id="ms_mode_btn" type="button" disabled aria-haspopup="listbox" aria-expanded="false" title="Pick a mode, then Apply — it's the mode the unit runs now, or the next time you turn it on">
-                <span id="ms_mode_label">—</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="mode-menu" id="ms_mode_menu" role="listbox" hidden>
-                <button data-mode="wet" role="option">Dry</button>
-                <button data-mode="cold" role="option">Cold</button>
-                <button data-mode="hot" role="option">Heat</button>
-              </div>
-            </div>
-          </div>
+          <div class="tile-label">Mini-split</div>
           <div class="tile-value" id="ms_tile_temp">—</div>
           <div class="tile-sub" id="ms_tile_sub">—</div>
         </div>

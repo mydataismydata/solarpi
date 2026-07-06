@@ -208,25 +208,6 @@ async def appliance():
     return api.appliance_payload(mgr.poller, configured=mgr.configured)
 
 
-@app.post("/api/appliance/power")
-async def appliance_power(on: bool = Body(..., embed=True)):
-    """Turn the mini-split on/off — read/write control path. A 5-minute cooldown between changes
-    is enforced here on the server (anti short-cycle); commands during the lockout are ignored."""
-    ap = app.state.appliance_manager.poller
-    if ap is None:
-        return {"ok": False, "error": "mini-split not configured"}
-    return await ap.set_power(on)
-
-
-@app.post("/api/appliance/mode")
-async def appliance_mode(mode: str = Body(..., embed=True)):
-    """Set the mini-split's mode (cold/hot/wet/auto/wind) — writes DP 4."""
-    ap = app.state.appliance_manager.poller
-    if ap is None:
-        return {"ok": False, "error": "mini-split not configured"}
-    return await ap.set_mode(mode)
-
-
 @app.post("/api/appliance/connect")
 async def appliance_connect(
     ip: str = Body(..., embed=True),

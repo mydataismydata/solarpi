@@ -24,15 +24,6 @@ DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
 MAX_ENERGY_GAP_S = 300.0  # power-integration fallback: don't integrate across gaps longer than this
 COUNTER_MAX_JUMP_WH = 100000.0  # a single counter delta bigger than this is a reset/bad read -> skip
-POWER_COOLDOWN_S = 300  # ignore on/off commands for 5 min after a change (protect the compressor)
-APPLIANCE_MODES = ("auto", "cold", "hot", "wind", "wet")  # DP 4 enum (cold=cool, hot=heat, wet=dry)
-MODE_REVERSE_COOLDOWN_S = 300  # gate cool/dry <-> heat switches for 5 min (compressor reversal)
-_COOLING_MODES = ("cold", "wet")  # cool + dry run the compressor the same way; hot reverses it
-
-
-def _is_compressor_reverse(from_mode, to_mode) -> bool:
-    """True when a mode switch crosses the heat/cool boundary (reverses the compressor)."""
-    return (from_mode in _COOLING_MODES and to_mode == "hot") or (from_mode == "hot" and to_mode in _COOLING_MODES)
 
 
 @dataclass
@@ -60,7 +51,7 @@ class ApplianceClient:
         self.temp_divisor = temp_divisor
         self.timeout = timeout
         self._device = None  # created lazily in a worker thread
-        self._lock = asyncio.Lock()  # serialize the poll read and control writes on the one socket
+        self._lock = asyncio.Lock()  # serialize socket use on the one connection (poll vs. a test read)
 
     def _ensure_device(self):
         if self._device is None:
@@ -84,18 +75,6 @@ class ApplianceClient:
             return None
         return data["dps"]
 
-    def _set_sync(self, dp, value) -> bool:
-        """Blocking write of a single datapoint. Returns True on success."""
-        try:
-            res = self._ensure_device().set_value(dp, value)
-        except Exception:
-            self._device = None
-            return False
-        if isinstance(res, dict) and res.get("Error"):
-            self._device = None
-            return False
-        return True
-
     async def read(self) -> Optional[ApplianceReading]:
         # tinytuya's status() is blocking; run it off the event loop. run_in_executor (not
         # asyncio.to_thread) keeps this working on Python 3.7/3.8 too.
@@ -106,15 +85,6 @@ class ApplianceClient:
             return None
         status = appliance.decode(dps, temp_divisor=self.temp_divisor)
         return ApplianceReading(status, dps)
-
-    async def set_dp(self, dp, value) -> bool:
-        """Write one datapoint — the only place the app controls the unit (read/write path)."""
-        loop = asyncio.get_running_loop()
-        async with self._lock:
-            return await loop.run_in_executor(None, self._set_sync, dp, value)
-
-    async def set_power(self, on: bool) -> bool:
-        return await self.set_dp(1, bool(on))  # DP 1 = on/off switch
 
 
 class AppliancePoller:
@@ -135,8 +105,6 @@ class AppliancePoller:
         self.status: Optional[appliance.ApplianceStatus] = None
         self.raw_dps: Optional[Dict[str, object]] = None
         self.consecutive_failures = 0
-        self.last_power_change: Optional[int] = None  # epoch of the last on/off change (cooldown anchor)
-        self.last_mode_reverse: Optional[int] = None  # epoch of the last heat<->cool switch (mode gate)
         # energy-accrual state. Primary: last cumulative counters (DP 107 solar / DP 110 total Wh),
         # differenced between reads. Fallback: trapezoidal integration of instantaneous power.
         self._e_solar_c: Optional[float] = None
@@ -186,49 +154,6 @@ class AppliancePoller:
             if 0 < dt <= MAX_ENERGY_GAP_S:
                 self.store.accrue_appliance(ts, dt, (self._e_solar + solar) / 2, (self._e_grid + grid) / 2)
         self._e_ts, self._e_solar, self._e_grid = ts, solar, grid
-
-    def power_cooldown_remaining(self) -> int:
-        """Seconds left in the post-change lockout (0 = a power command is allowed now).
-        Anti short-cycle: the compressor must not be flipped on/off in quick succession."""
-        if self.last_power_change is None:
-            return 0
-        return max(0, POWER_COOLDOWN_S - (int(self.clock()) - self.last_power_change))
-
-    async def set_power(self, on: bool) -> Dict[str, object]:
-        """Turn the unit on/off, ENFORCED SERVER-SIDE: any command inside the cooldown window is
-        ignored (not sent). On success, stamps the change (starting a fresh cooldown) and re-polls."""
-        remaining = self.power_cooldown_remaining()
-        if remaining > 0:
-            return {"ok": False, "cooldown": True, "retry_after": remaining}
-        ok = await self.client.set_power(on)
-        if ok:
-            self.last_power_change = int(self.clock())
-            await self.poll_once()  # refresh the cached snapshot so the UI reflects the new state
-        return {"ok": ok, "power": on if ok else None, "cooldown": False}
-
-    def mode_reverse_cooldown_remaining(self) -> int:
-        """Seconds left in the cool/dry <-> heat lockout (0 = a reversing switch is allowed now)."""
-        if self.last_mode_reverse is None:
-            return 0
-        return max(0, MODE_REVERSE_COOLDOWN_S - (int(self.clock()) - self.last_mode_reverse))
-
-    async def set_mode(self, mode: str) -> Dict[str, object]:
-        """Set the operating mode (writes DP 4). A cool/dry <-> heat switch reverses the compressor,
-        so it's gated by a 5-min cooldown (enforced here); same-side switches (cool<->dry) are free."""
-        if mode not in APPLIANCE_MODES:
-            return {"ok": False, "error": "unknown mode %r" % (mode,)}
-        current = self.status.mode if self.status else None
-        reversing = _is_compressor_reverse(current, mode)
-        if reversing:
-            remaining = self.mode_reverse_cooldown_remaining()
-            if remaining > 0:
-                return {"ok": False, "cooldown": True, "retry_after": remaining, "reason": "mode_reverse"}
-        ok = await self.client.set_dp(4, mode)
-        if ok:
-            if reversing:
-                self.last_mode_reverse = int(self.clock())
-            await self.poll_once()
-        return {"ok": ok, "mode": mode if ok else None}
 
     async def run(self, stop_event: Optional[asyncio.Event] = None) -> None:
         while not (stop_event and stop_event.is_set()):
