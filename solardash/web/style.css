@@ -341,7 +341,8 @@ body.hide-energy #energyCard { display: none; }
 body.hide-history #historyCard { display: none; }
 body.hide-battery-history #batteryHistoryCard { display: none; }
 body.hide-msenergy #msEnergyCard { display: none; }
-body.hide-minisplit .minisplit-panel { display: none; }
+body.hide-minisplit .minisplit-panel,
+body.hide-minisplit .tile[data-k="minisplit"] { display: none; }
 
 /* Snapshot confirmation toast (bottom-centre, auto-dismissed). */
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60;
