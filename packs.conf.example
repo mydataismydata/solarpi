@@ -1,0 +1,23 @@
+# Solar Pi — battery packs (JBD/ECO BMS over BLE). One pack per line.
+#
+# Copy this file to  packs.conf  (in ~/solardash, beside solardash.env) and edit it:
+#     cp packs.conf.example packs.conf
+# Then restart:  systemctl --user restart solardash
+#
+# Columns are whitespace-separated:   MAC   [position]   [name]
+#   MAC       required. The pack's Bluetooth address (aa:bb:cc:dd:ee:ff).
+#   position  optional integer — the "#N" label shown on the tile. Just a label; set it to
+#             whatever you want (see the README note about DIP switches vs. displayed position).
+#   name      optional. Defaults to the MAC's last 6 hex digits.
+# '#' starts a comment; blank lines are ignored.
+#
+# Tip: don't hand-type MACs — run `python deploy/ble_scan.py --emit` on the Pi and paste the
+# output here. That way an 08-vs-0B typo can't happen in the first place.
+#
+# MAC                  pos  name
+# AA:C2:37:06:56:72     1    Pack-1
+# AA:C2:37:06:57:4C     2    Pack-2
+# AA:C2:37:08:25:3D     3    Pack-3
+# AA:C2:37:08:25:44     4    Pack-4
+# AA:C2:37:0B:40:05     5    Pack-5
+# AA:C2:37:0B:40:6A     6    Pack-6

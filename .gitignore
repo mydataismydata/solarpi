@@ -13,6 +13,10 @@ venv/
 data/
 *.log
 
+# Deployment config with this site's real MACs (copy packs.conf.example -> packs.conf)
+packs.conf
+solardash.env
+
 # CSV exports written by `solar export-hourly`
 exports/
 

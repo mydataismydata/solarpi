@@ -340,12 +340,43 @@ SOLAR_POLL_INTERVAL=10
 # enable it if the Pi + dongle are on a UPS (otherwise a remote OFF also kills the dashboard).
 SOLAR_INVERTER_CONTROL=0
 
-# Battery packs (JBD BMS over BLE) — comma-separated MACs, optional =name.
-# Find the MACs with: deploy/ble_probe.py
+# Battery packs (JBD/ECO BMS over BLE). PREFERRED: list them one-per-line in packs.conf
+# (see "Battery packs" below) — far easier to read than these comma-jammed vars, which are
+# only a legacy fallback used when packs.conf is absent.
 SOLAR_BMS_ADDRESSES=AA:BB:CC:DD:EE:01,AA:BB:CC:DD:EE:02
-# Each pack's fixed parallel position (#N from the phone app) — MAC=pos,...
 SOLAR_BMS_POSITIONS=AA:BB:CC:DD:EE:01=1,AA:BB:CC:DD:EE:02=2
 ```
+
+#### Battery packs (`packs.conf`)
+
+List your BLE packs one per line in `~/solardash/packs.conf` — far more legible than the
+comma-jammed env var, where a one-character MAC typo (`08` vs `0B`) is invisible. Start from the
+committed template:
+
+```
+cp packs.conf.example packs.conf
+```
+
+Each line is `MAC [position] [name]` (whitespace-separated columns; `#` comments and blank lines
+are ignored):
+
+```
+# MAC                  pos  name
+AA:C2:37:06:56:72      1    Pack-1
+AA:C2:37:0B:40:6A      6    Pack-6
+```
+
+Don't hand-type MACs — that's how the typo gets in. Let the scanner find the packs the Pi can
+actually hear and emit ready-to-paste lines:
+
+```
+python deploy/ble_scan.py --emit >> packs.conf     # then edit positions/names and restart
+```
+
+`packs.conf` wins over `SOLAR_BMS_ADDRESSES` / `SOLAR_BMS_POSITIONS` when it's present and lists
+at least one pack; override its path with `SOLAR_BMS_FILE`. `position` is just the `#N` label on
+the tile (see the DIP-switch note under Troubleshooting). Restart to apply:
+`systemctl --user restart solardash`.
 
 The database is created automatically at `~/solardash/data/solar.sqlite`.
 
