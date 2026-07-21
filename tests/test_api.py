@@ -62,6 +62,23 @@ class ApiTest(unittest.TestCase):
         self.store.insert(InverterStatus(battery_soc=50, battery_voltage=50.0, battery_current=-20.0), ts=2)
         self.assertIsNone(api.current_payload(self.store, self.catalog)["battery_eta_minutes"])
 
+    def test_bms_soc_overrides_inverter(self):
+        # The BMS bank SOC replaces the inverter's own guess, keeps it as inverter_soc, and the ETA
+        # is computed from the BMS value (4.8 kWh * 42% = 2016 Wh / 1000 W ~ 121 min to empty).
+        self.store.insert(InverterStatus(battery_soc=55, battery_voltage=50.0, battery_current=-20.0), ts=1)
+        out = api.current_payload(self.store, self.catalog, battery_capacity_wh=4800, bms_soc=42.0)
+        self.assertEqual(out["battery_soc"], 42.0)   # shown value is the BMS bank SOC
+        self.assertEqual(out["inverter_soc"], 55)    # inverter's own reading preserved
+        self.assertEqual(out["battery_eta_kind"], "empty")
+        self.assertAlmostEqual(out["battery_eta_minutes"], 121, delta=2)
+
+    def test_no_bms_soc_leaves_inverter_value(self):
+        # Without a BMS reading, battery_soc stays the inverter's and no inverter_soc field appears.
+        self.store.insert(InverterStatus(battery_soc=55), ts=1)
+        out = api.current_payload(self.store, self.catalog)
+        self.assertEqual(out["battery_soc"], 55)
+        self.assertNotIn("inverter_soc", out)
+
     def test_history_columnar_shape(self):
         for i in range(3):
             self.store.insert(InverterStatus(battery_voltage=float(50 + i)), ts=100 + i)

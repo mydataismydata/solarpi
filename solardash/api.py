@@ -40,8 +40,15 @@ def current_payload(
     catalog: Optional[FaultCatalog] = None,
     battery_capacity_wh: Optional[float] = None,
     inverter_control: bool = False,
+    bms_soc: Optional[float] = None,
 ) -> Dict[str, object]:
-    """Latest snapshot for the live tiles, with faults annotated and a battery ETA."""
+    """Latest snapshot for the live tiles, with faults annotated and a battery ETA.
+
+    When a BMS bank SOC is supplied it replaces the inverter's own `battery_soc`: each pack
+    coulomb-counts, so the BMS is far more accurate than the inverter's voltage-based guess (which
+    also reads wrong after the bank's capacity changes). The inverter's own figure is preserved as
+    `inverter_soc`. This mirrors how the UI already trusts the BMS temperature over the inverter's.
+    """
     latest = store.latest()
     if latest is None:
         return {"available": False}
@@ -56,6 +63,12 @@ def current_payload(
         v = out.get(f"pv{n}_voltage")
         i = out.get(f"pv{n}_current")
         out[f"pv{n}_power"] = round(v * i, 1) if (v is not None and i is not None) else None
+    # Prefer the BMS bank SOC over the inverter's own estimate (see docstring), keeping the
+    # inverter's figure as inverter_soc. Compute the ETA from whichever SOC we end up showing so
+    # the number and its time-to-full/empty stay consistent.
+    if bms_soc is not None:
+        out["inverter_soc"] = out.get("battery_soc")
+        out["battery_soc"] = bms_soc
     out["battery_eta_minutes"], out["battery_eta_kind"] = _battery_eta(out, battery_capacity_wh)
     # Whether the remote AC-output control is enabled, and whether the output is currently live
     # (inferred from L1 output voltage) so the UI can show/label the power button.
@@ -133,7 +146,8 @@ def snapshot_inputs(
 
     Returns (current, today_bucket, hourly_buckets, lifetime, battery, history).
     """
-    cur = current_payload(store, catalog, battery_capacity_wh=battery_capacity_wh)
+    bms_soc = bms_poller.bank.soc if (bms_poller is not None and getattr(bms_poller, "bank", None) is not None) else None
+    cur = current_payload(store, catalog, battery_capacity_wh=battery_capacity_wh, bms_soc=bms_soc)
     now = time.localtime()
     today_mid = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
     day_key = time.strftime("%Y-%m-%d", now)

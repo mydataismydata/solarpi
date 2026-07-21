@@ -168,11 +168,15 @@ def _battery_capacity_wh() -> float:
 
 @app.get("/api/current")
 async def current():
+    # Prefer the BMS bank SOC (accurate, coulomb-counted) over the inverter's voltage-based guess.
+    bp = app.state.bms_poller
+    bms_soc = bp.bank.soc if (bp is not None and getattr(bp, "bank", None) is not None) else None
     return api.current_payload(
         app.state.store,
         app.state.catalog,
         battery_capacity_wh=_battery_capacity_wh(),
         inverter_control=app.state.cfg.inverter_control_enabled,
+        bms_soc=bms_soc,
     )
 
 
