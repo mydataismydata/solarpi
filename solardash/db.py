@@ -23,6 +23,7 @@ COLUMNS = [
     ("battery_current", "REAL"),
     ("battery_power", "REAL"),
     ("battery_temp", "REAL"),
+    ("bms_soc", "REAL"),  # BMS bank SOC (%), stamped from the BLE poller when present (not an inverter field)
     ("pv1_voltage", "REAL"),
     ("pv1_current", "REAL"),
     ("pv2_voltage", "REAL"),
@@ -107,6 +108,13 @@ class TimeSeriesStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_samples_ts ON inverter_samples(ts)"
             )
+            # Migration: add any columns introduced after this DB's table was first created
+            # (CREATE TABLE IF NOT EXISTS won't alter an existing table). Additive and safe —
+            # old rows get NULL for the new column.
+            existing = {r["name"] for r in self._conn.execute("PRAGMA table_info(inverter_samples)")}
+            for name, sqltype in COLUMNS:
+                if name not in existing:
+                    self._conn.execute(f"ALTER TABLE inverter_samples ADD COLUMN {name} {sqltype}")
             # Hourly energy accumulators (Wh). pv_wh = solar input, load_wh = AC output,
             # charge/discharge_wh = battery. Roll-ups (day/month/lifetime) SUM these rows.
             self._conn.execute(
@@ -141,10 +149,11 @@ class TimeSeriesStore:
             )
             self._conn.commit()
 
-    def insert(self, status: InverterStatus, ts: Optional[int] = None) -> int:
+    def insert(self, status: InverterStatus, ts: Optional[int] = None, bms_soc: Optional[float] = None) -> int:
         if ts is None:
             ts = int(time.time())
         row = status_to_row(status)
+        row["bms_soc"] = bms_soc  # not an InverterStatus field; the poller supplies the BMS bank SOC
         cols = ["ts"] + COLUMN_NAMES
         placeholders = ", ".join("?" for _ in cols)
         values = [ts] + [row[name] for name in COLUMN_NAMES]

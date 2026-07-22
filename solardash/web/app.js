@@ -430,11 +430,16 @@ function renderBatteryLegend() {
 
 async function loadBatteryHistory(win) {
   const now = Math.floor(Date.now() / 1000);
-  const url = `api/history?fields=battery_soc&start=${now - win}&max_points=600`;
+  const url = `api/history?fields=bms_soc,battery_soc&start=${now - win}&max_points=600`;
   let payload;
   try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
 
-  const data = [payload.ts, payload.series.battery_soc || []];
+  // Prefer the BMS bank SOC (accurate, coulomb-counted); fall back to the inverter's recorded
+  // value for older samples taken before the BMS was recording.
+  const bms = payload.series.bms_soc || [];
+  const inv = payload.series.battery_soc || [];
+  const soc = (payload.ts || []).map((_, i) => (bms[i] != null ? bms[i] : inv[i] != null ? inv[i] : null));
+  const data = [payload.ts, soc];
   updateBatteryStats(data[0], data[1], win);
   const width = $("batteryChart").clientWidth || 800;
   if (batteryChart) {

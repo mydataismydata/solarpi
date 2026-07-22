@@ -46,6 +46,43 @@ class StoreTest(unittest.TestCase):
         self.store.insert(make_status(fault_codes=[3, 9]), ts=1)
         self.assertEqual(self.store.latest()["fault_codes"], [3, 9])
 
+    def test_bms_soc_recorded_alongside_inverter(self):
+        # The BMS bank SOC lands in its own column; the inverter's own battery_soc is untouched.
+        self.store.insert(make_status(battery_soc=55), ts=1, bms_soc=42.0)
+        latest = self.store.latest()
+        self.assertEqual(latest["bms_soc"], 42.0)
+        self.assertEqual(latest["battery_soc"], 55)
+        self.assertEqual([r["bms_soc"] for r in self.store.series(["bms_soc"], start=1, end=1)], [42.0])
+
+    def test_bms_soc_defaults_null(self):
+        self.store.insert(make_status(battery_soc=55), ts=1)  # no BMS supplied
+        self.assertIsNone(self.store.latest()["bms_soc"])
+
+    def test_migration_adds_missing_columns(self):
+        # A pre-bms_soc DB (table created without the column) must be ALTERed on open, not rejected.
+        import shutil
+        import sqlite3
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "old.sqlite")
+            conn = sqlite3.connect(path)
+            conn.execute("CREATE TABLE inverter_samples (ts INTEGER NOT NULL, battery_soc INTEGER)")
+            conn.execute("INSERT INTO inverter_samples (ts, battery_soc) VALUES (1, 77)")
+            conn.commit()
+            conn.close()
+            store = TimeSeriesStore(path)
+            try:
+                cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(inverter_samples)")}
+                self.assertIn("bms_soc", cols)        # new column backfilled
+                self.assertIn("battery_power", cols)  # every COLUMNS entry present after migration
+                store.insert(make_status(battery_soc=80), ts=2, bms_soc=41.0)
+                self.assertEqual(store.latest()["bms_soc"], 41.0)
+            finally:
+                store.close()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_series_range_and_order(self):
         for i in range(5):
             self.store.insert(make_status(battery_voltage=float(i * 100)), ts=2000 + i)
@@ -145,6 +182,34 @@ class PollerTest(unittest.TestCase):
         result, count = asyncio.run(run())
         self.assertIsNone(result)
         self.assertEqual(count, 0)
+
+    def test_bms_soc_getter_stamped_on_sample(self):
+        async def run():
+            store = TimeSeriesStore(":memory:")
+            client = _FakeClient([{0x0100: 87, 0x0101: 532}])  # has core battery voltage -> stored
+            poller = Poller(client, store, clock=lambda: 1, bms_soc_getter=lambda: 42.0)
+            await poller.poll_once()
+            return store.latest()
+
+        latest = asyncio.run(run())
+        self.assertEqual(latest["bms_soc"], 42.0)     # BMS bank SOC recorded on the sample
+        self.assertEqual(latest["battery_soc"], 87)   # inverter's own value kept alongside
+
+    def test_bms_soc_getter_error_does_not_break_poll(self):
+        async def run():
+            store = TimeSeriesStore(":memory:")
+            client = _FakeClient([{0x0100: 87, 0x0101: 532}])
+
+            def boom():
+                raise RuntimeError("BLE down")
+
+            poller = Poller(client, store, clock=lambda: 1, bms_soc_getter=boom)
+            result = await poller.poll_once()
+            return result, store.latest()
+
+        result, latest = asyncio.run(run())
+        self.assertIsNotNone(result)          # the poll still succeeded
+        self.assertIsNone(latest["bms_soc"])  # getter blew up -> NULL, no crash
 
 
 if __name__ == "__main__":

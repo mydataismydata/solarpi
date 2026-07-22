@@ -71,7 +71,15 @@ async def lifespan(app: FastAPI):
     store = TimeSeriesStore(cfg.db_path)
     catalog = FaultCatalog.load()
     client = InverterClient(cfg.inverter_ip, cfg.inverter_serial, port=cfg.inverter_port)
-    poller = Poller(client, store, interval_s=cfg.poll_interval_s)
+
+    # Stamp each inverter sample with the live BMS bank SOC (read from the BLE poller, set on
+    # app.state below) so the battery-history chart and its stats reflect the accurate value
+    # rather than the inverter's own guess. Returns None until the BMS has a bank, or if disabled.
+    def _bms_bank_soc():
+        bp = getattr(app.state, "bms_poller", None)
+        return bp.bank.soc if (bp is not None and getattr(bp, "bank", None) is not None) else None
+
+    poller = Poller(client, store, interval_s=cfg.poll_interval_s, bms_soc_getter=_bms_bank_soc)
     # Shares the client (and thus its socket lock) with the poller, so an output command and a poll
     # read never talk to the dongle at once. Endpoint stays gated on cfg.inverter_control_enabled.
     inverter_control = InverterControl(client)

@@ -27,12 +27,16 @@ class Poller:
         interval_s: float = DEFAULT_INTERVAL_S,
         clock: Callable[[], float] = time.time,
         on_sample: Optional[Callable[[int, inverter.InverterStatus], None]] = None,
+        bms_soc_getter: Optional[Callable[[], Optional[float]]] = None,
     ):
         self.client = client
         self.store = store
         self.interval_s = interval_s
         self.clock = clock
         self.on_sample = on_sample
+        # Returns the current BMS bank SOC (accurate, coulomb-counted) to stamp on each sample, or
+        # None when the BLE bank isn't available. Lets the battery-history chart show the real SOC.
+        self.bms_soc_getter = bms_soc_getter
         self._last_raw: Optional[Dict[int, int]] = None
         self.last_ts: Optional[int] = None
         self.last_status: Optional[inverter.InverterStatus] = None
@@ -60,12 +64,22 @@ class Poller:
         self.consecutive_failures = 0
         status = inverter.decode(merged)
         ts = int(self.clock())
-        self.store.insert(status, ts=ts)
+        self.store.insert(status, ts=ts, bms_soc=self._read_bms_soc())
         self._accrue_energy(ts, status)
         self.last_ts, self.last_status = ts, status
         if self.on_sample:
             self.on_sample(ts, status)
         return status
+
+    def _read_bms_soc(self) -> Optional[float]:
+        """BMS bank SOC to record with this sample, or None if unavailable. A getter error must
+        never break the poll, so swallow it."""
+        if self.bms_soc_getter is None:
+            return None
+        try:
+            return self.bms_soc_getter()
+        except Exception:
+            return None
 
     def _accrue_energy(self, ts: int, status: inverter.InverterStatus) -> None:
         pv = status.pv_power or 0.0
