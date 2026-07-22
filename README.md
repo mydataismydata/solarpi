@@ -477,6 +477,18 @@ Pi to `git pull` and restart the service:
 It needs passwordless (key-based) SSH to the Pi — the same key you can paste during
 imaging in step 1.
 
+### Updating on the Pi itself
+Already SSH'd into the Pi? Run the bundled updater — it pulls the latest, reinstalls deps only if
+`requirements.txt` changed, restarts the service, and confirms it came back up. It skips the
+restart when nothing changed, so your BLE packs aren't needlessly dropped:
+
+```bash
+~/solardash/update.sh            # pull + restart if there are new commits
+~/solardash/update.sh --force    # restart anyway (e.g. after editing solardash.env or packs.conf)
+```
+
+(First time only, if it isn't already executable: `chmod +x ~/solardash/update.sh`.)
+
 ## Mini-split appliance (EG4 / Deye, over Wi-Fi)
 
 The EG4 24K BTU Hybrid Solar Mini-Split (AC/DC, R32) is a rebadged **Deye** unit and a **Tuya**

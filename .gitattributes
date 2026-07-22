@@ -1,2 +1,4 @@
 # Hook scripts must stay LF so /bin/sh runs them on Linux (the Raspberry Pi).
 .githooks/** text eol=lf
+# Shell scripts run on the Pi — keep LF so bash doesn't choke on CRLF (bad interpreter ^M).
+*.sh text eol=lf
