@@ -195,7 +195,9 @@ function renderBatteryDetail(container, d) {
         <div class="bd-pack-stats">${p.voltage.toFixed(2)} V · <span class="${cls}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(1)} A</span> · ${tempRangeCF(p.temp_min, p.temp_max)}${fault}</div>
       </div>`;
   }).join("");
-  container.innerHTML = `<div class="bd-packs">${cards}</div>`;
+  // Cap the single-row layout at 6 columns — past that the cards get too narrow to read.
+  const cols = Math.min(d.packs.length, 6);
+  container.innerHTML = `<div class="bd-packs" style="--bd-cols:${cols}">${cards}</div>`;
 }
 
 /* Power-flow diagram — web port of FlowDiagram (ui/SolarFlow.kt): Solar → Inverter → Battery

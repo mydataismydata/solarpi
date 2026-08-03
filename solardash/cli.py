@@ -628,9 +628,11 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
     packs = (batt or {}).get("packs") or []
     if packs:
         packs = sorted(packs, key=lambda p: p.get("parallel") if p.get("parallel") is not None else 99)
+        cols = min(len(packs), 6)  # matches the dashboard's single-row cap in style.css
         detail_html = ('<section class="card battery-detail-card"><div class="chart-head">'
                        '<h2>Batteries · Per-pack state of charge</h2></div>'
-                       f'<div class="bd-packs">{"".join(_pack_card(p) for p in packs)}</div></section>')
+                       f'<div class="bd-packs" style="--bd-cols:{cols}">'
+                       f'{"".join(_pack_card(p) for p in packs)}</div></section>')
     else:
         detail_html = ""
 

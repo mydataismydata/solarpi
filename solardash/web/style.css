@@ -314,8 +314,13 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .bd-bank-soc small { font-size: 18px; color: var(--txt2); }
 .bd-bank-cap { font-size: 14px; color: var(--txt); font-weight: 600; }
 .bd-bank-sub { font-size: 12.5px; color: var(--txt3); margin-top: 3px; font-variant-numeric: tabular-nums; }
+/* Narrow screens wrap on their own; from 1040px up every pack sits on one row, using the
+   real pack count (--bd-cols, set by the renderer) so a smaller bank still fills the width. */
 .bd-packs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-.bd-pack { background: var(--surface2); border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px; }
+@media (min-width: 1040px) {
+  .bd-packs { grid-template-columns: repeat(var(--bd-cols, 6), minmax(0, 1fr)); gap: 10px; }
+}
+.bd-pack { background: var(--surface2); border: 1px solid var(--line); border-radius: 14px; padding: 13px 12px; }
 .bd-pack-head { display: flex; justify-content: space-between; align-items: baseline; }
 .bd-pack-name { font-weight: 600; font-size: 13px; color: var(--txt); }
 .bd-pack-soc { font-family: var(--mono); font-weight: 680; font-size: 22px; color: var(--charge-ink); font-variant-numeric: tabular-nums; }
