@@ -221,6 +221,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin-top: 12px; }
 .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .chart-head h2 { font-size: 15px; font-weight: 600; margin: 0; color: var(--txt); }
+/* Which month/day a drilled-in chart is showing, next to its heading. */
+.chart-ctx { font-size: 12.5px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Lifetime totals shown inline in the Power history header. */
 .head-left { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; min-width: 0; }
@@ -301,7 +303,10 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .ebar-ms-grid { border-color: #2DD4BF; background: color-mix(in srgb, #2DD4BF 18%, transparent); }
 .ebar-x { font-size: 10px; color: var(--txt3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ebars-empty { color: var(--txt3); font-size: 13px; padding: 50px 0; text-align: center; width: 100%; }
-.ebar-group { cursor: pointer; }
+/* Single click opens the detail popup; in the Yearly/Monthly views a double-click drills in, so
+   suppress the text selection that a double-click would otherwise leave behind. */
+.ebar-group { cursor: pointer; user-select: none; }
+.ebars.drillable .ebar-group { cursor: zoom-in; }
 .ebar-popup { position: fixed; z-index: 50; background: var(--surface2); border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.55); font-size: 13px; min-width: 158px; pointer-events: none; }
 .pop-title { font-weight: 700; color: var(--txt); margin-bottom: 8px; }
 .pop-row { display: flex; align-items: center; gap: 8px; color: var(--txt2); padding: 2px 0; }

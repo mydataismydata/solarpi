@@ -28,6 +28,10 @@ let batteryChart = null;
 let activeWin = 86400;
 let activeBattWin = 86400;
 let activePeriod = "hour";
+// Which day/month/year the Energy-trends chart is centred on. null means "live" — always the
+// current day/month/year, so the default view rolls over at midnight without a reload. Drilling
+// into a bar pins it to a concrete date; the Today button clears it back to null.
+let energyAnchor = null;
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
 let msActivePeriod = "hour"; // selected range for the mini-split energy chart
 let msEnergyView = null;     // { period, rows } currently displayed for the mini-split energy chart
@@ -639,8 +643,8 @@ function hourRange(h) {
 
 // Build the full set of calendar slots for the view, each with the SQLite-localtime bucket key
 // it should match: Daily=24 hours of today, Monthly=days of this month, Yearly=12 months this year.
-function genSlots(period) {
-  const now = new Date();
+function genSlots(period, anchor) {
+  const now = anchor || new Date();
   const slots = [];
   if (period === "hour") {
     const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -665,11 +669,36 @@ function genSlots(period) {
   return slots;
 }
 
+// The date the Energy chart is centred on ("live" resolves to right now).
+const energyAnchorDate = () => energyAnchor || new Date();
+
+// Last second covered by the view, so the query asks for exactly the slots on screen. Derived from
+// the start of the *next* period so month lengths and DST shifts are handled by Date itself.
+function periodEnd(period, anchor) {
+  const y = anchor.getFullYear(), m = anchor.getMonth(), d = anchor.getDate();
+  const next = period === "hour" ? new Date(y, m, d + 1)
+    : period === "day" ? new Date(y, m + 1, 1)
+      : new Date(y + 1, 0, 1);
+  return Math.floor(next.getTime() / 1000) - 1;
+}
+
+// Caption next to the heading, so a drilled-in view says which month/day you're looking at.
+function energyCtxLabel(period, anchor) {
+  const y = anchor.getFullYear(), m = anchor.getMonth(), d = anchor.getDate();
+  if (period === "month") return String(y);
+  if (period === "day") return `${FULL_MONTHS[m]} ${y}`;
+  const t = new Date();
+  const isToday = y === t.getFullYear() && m === t.getMonth() && d === t.getDate();
+  return isToday ? "Today" : `${MONTHS[m]} ${d}, ${y}`;
+}
+
 async function loadEnergy(period) {
-  const slots = genSlots(period);
+  const anchor = energyAnchorDate();
+  const slots = genSlots(period, anchor);
   if (!slots.length) return;
   let payload;
-  try { payload = await (await fetch(`api/energy?period=${period}&start=${slots[0].start_ts}`, { cache: "no-store" })).json(); }
+  const q = `period=${period}&start=${slots[0].start_ts}&end=${periodEnd(period, anchor)}`;
+  try { payload = await (await fetch(`api/energy?${q}`, { cache: "no-store" })).json(); }
   catch (e) { return; }
   const byKey = {};
   for (const b of payload.buckets || []) byKey[b.bucket] = b;
@@ -680,14 +709,17 @@ async function loadEnergy(period) {
     tin += pv; tout += load;
     if (pv > maxIn) maxIn = pv;
     if (load > maxOut) maxOut = load;
-    return { key: s.key, label: s.label, title: s.title, pv, load, charge: d ? d.charge_kwh : 0, discharge: d ? d.discharge_kwh : 0 };
+    return { key: s.key, label: s.label, title: s.title, start_ts: s.start_ts, pv, load, charge: d ? d.charge_kwh : 0, discharge: d ? d.discharge_kwh : 0 };
   });
-  energyView = { period, rows: merged };
+  energyView = { period, rows: merged, anchor };
   // Totals + peak bucket for the selected period (the peak is the single highest hour/day/month).
   $("e_in").textContent = fmt(tin, 1);
   $("e_out").textContent = fmt(tout, 1);
   $("e_max_in").textContent = fmt(maxIn, 2);
   $("e_max_out").textContent = fmt(maxOut, 2);
+  $("ectx").textContent = energyCtxLabel(period, anchor);
+  // Hourly is the deepest level — only the coarser views can be drilled into.
+  $("ebars").classList.toggle("drillable", period !== "hour");
   renderEnergyBars($("ebars"), merged, energyVisible());
 }
 
@@ -745,11 +777,30 @@ function initERanges() {
   $("eranges").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-    document.querySelectorAll("#eranges button").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    activePeriod = btn.dataset.period;
-    loadEnergy(activePeriod);
+    // Switching range keeps the anchor, so coming back to Monthly returns to the month you drilled
+    // into rather than snapping to the current one.
+    setEnergyPeriod(btn.dataset.period);
   });
+  // Double-click a bar to drill down a level: Yearly -> that month, Monthly -> that day.
+  $("ebars").addEventListener("dblclick", (e) => {
+    const g = e.target.closest(".ebar-group");
+    if (!g || activePeriod === "hour") return;
+    const start = Number(g.dataset.start);
+    if (!start) return;
+    energyAnchor = new Date(start * 1000);
+    setEnergyPeriod(activePeriod === "month" ? "day" : "hour");
+  });
+  $("etodayBtn").addEventListener("click", () => {
+    energyAnchor = null; // back to live, so it keeps tracking the current day
+    setEnergyPeriod("hour");
+  });
+}
+
+// Point the Energy chart at a range, syncing the button row, and reload it.
+function setEnergyPeriod(period) {
+  activePeriod = period;
+  document.querySelectorAll("#eranges button").forEach((b) => b.classList.toggle("active", b.dataset.period === period));
+  loadEnergy(period);
 }
 
 // ---- mini-split energy chart (solar vs grid draw, kWh) ---------------------

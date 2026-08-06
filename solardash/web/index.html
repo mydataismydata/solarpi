@@ -229,6 +229,7 @@
       <div class="chart-head">
         <div class="head-left">
           <h2>Energy trends</h2>
+          <span class="chart-ctx" id="ectx" title="Period in view — double-click a bar to drill into it">—</span>
           <div class="lt-inline" id="etotalsInline" title="Totals for the selected period (max = peak bucket)">
             <span class="lti in">Input <b id="e_in">—</b> <span class="lti-peak">(max <b id="e_max_in">—</b>)</span></span>
             <span class="lti out">Output <b id="e_out">—</b> <span class="lti-peak">(max <b id="e_max_out">—</b>)</span> kWh</span>
@@ -240,6 +241,7 @@
             <button data-period="day">Monthly</button>
             <button data-period="month">Yearly</button>
           </div>
+          <button class="export-btn" id="etodayBtn" title="Back to today's hourly view">Today</button>
           <button class="export-btn" id="exportBtn" title="Download the current view as CSV">Export data</button>
         </div>
       </div>

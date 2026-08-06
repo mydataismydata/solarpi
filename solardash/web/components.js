@@ -349,7 +349,8 @@ function renderEnergyBars(container, slots, visible) {
       const oh = (s.load / axisMax) * 100;
       const inBar = showIn ? `<div class="ebar ebar-in" style="height:${ih.toFixed(1)}%"></div>` : "";
       const outBar = showOut ? `<div class="ebar ebar-out" style="height:${oh.toFixed(1)}%"></div>` : "";
-      return `<div class="ebar-group" data-label="${s.label}" data-title="${s.title || s.label}" data-pv="${s.pv}" data-load="${s.load}" data-charge="${s.charge || 0}" data-discharge="${s.discharge || 0}">
+      // data-start is the slot's epoch seconds — the drill-down handler reads it to re-anchor.
+      return `<div class="ebar-group" data-label="${s.label}" data-title="${s.title || s.label}" data-start="${s.start_ts || ""}" data-pv="${s.pv}" data-load="${s.load}" data-charge="${s.charge || 0}" data-discharge="${s.discharge || 0}">
         <div class="ebar-plot">${inBar}${outBar}</div>
         <div class="ebar-x">${s.label}</div>
       </div>`;
