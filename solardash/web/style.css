@@ -246,6 +246,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 #legend .item, #elegend .item { cursor: pointer; user-select: none; -webkit-user-select: none; transition: opacity 0.15s ease, color 0.15s ease; }
 #legend .item:hover, #elegend .item:hover { color: var(--txt); }
 #legend .item.off, #elegend .item.off { opacity: 0.4; }
+/* Max/Min battery charge, pushed to the far end of the Power history legend row. */
+.legend-stats { margin-left: auto; align-self: center; }
 
 .foot { text-align: center; color: var(--txt3); font-size: 12px; margin-top: 18px; }
 
@@ -349,7 +351,6 @@ body.hide-acin .acin-panel { display: none; }
 body.hide-battery #batteryDetailCard { display: none; }
 body.hide-energy #energyCard { display: none; }
 body.hide-history #historyCard { display: none; }
-body.hide-battery-history #batteryHistoryCard { display: none; }
 body.hide-msenergy #msEnergyCard { display: none; }
 body.hide-minisplit .minisplit-panel { display: none; }
 /* Hiding a hero panel must drop the hero column count so the rest span full width. */

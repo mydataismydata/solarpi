@@ -34,7 +34,6 @@
           <label class="setting-row"><span>Show energy trends</span><input type="checkbox" id="toggleEnergy" /></label>
           <label class="setting-row"><span>Show power history</span><input type="checkbox" id="toggleHistory" /></label>
           <label class="setting-row"><span>Show mini-split</span><input type="checkbox" id="toggleMinisplit" /></label>
-          <label class="setting-row"><span>Show battery history</span><input type="checkbox" id="toggleBatteryHistory" /></label>
           <label class="setting-row"><span>Show mini-split energy</span><input type="checkbox" id="toggleMsEnergy" /></label>
           <div class="settings-sep" id="unpairRow" hidden>
             <button class="settings-action" id="unpairMsBtn" type="button">Unpair from Mini-split</button>
@@ -271,27 +270,6 @@
       </div>
       <div id="chart"></div>
       <div class="legend" id="legend"></div>
-    </section>
-
-    <section class="card chart-card" id="batteryHistoryCard">
-      <div class="chart-head">
-        <div class="head-left">
-          <h2>Battery history</h2>
-          <div class="lt-inline" id="battStats" title="Peak charge over the selected window">
-            <span class="lti">Max <b id="batt_max">—</b></span>
-            <span class="lti">Min <b id="batt_min">—</b></span>
-          </div>
-        </div>
-        <div class="ranges" id="bRanges">
-          <button data-win="3600">1H</button>
-          <button data-win="21600">6H</button>
-          <button data-win="86400" class="active">24H</button>
-          <button data-win="604800">7D</button>
-          <button data-win="2592000">30D</button>
-        </div>
-      </div>
-      <div id="batteryChart"></div>
-      <div class="legend" id="batteryLegend"></div>
     </section>
 
     <section class="card energy-card" id="msEnergyCard">

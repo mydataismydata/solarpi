@@ -35,7 +35,7 @@ class Poller:
         self.clock = clock
         self.on_sample = on_sample
         # Returns the current BMS bank SOC (accurate, coulomb-counted) to stamp on each sample, or
-        # None when the BLE bank isn't available. Lets the battery-history chart show the real SOC.
+        # None when the BLE bank isn't available. Lets the power-history chart plot the real SOC.
         self.bms_soc_getter = bms_soc_getter
         self._last_raw: Optional[Dict[int, int]] = None
         self.last_ts: Optional[int] = None

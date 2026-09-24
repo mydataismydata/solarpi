@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
     client = InverterClient(cfg.inverter_ip, cfg.inverter_serial, port=cfg.inverter_port)
 
     # Stamp each inverter sample with the live BMS bank SOC (read from the BLE poller, set on
-    # app.state below) so the battery-history chart and its stats reflect the accurate value
+    # app.state below) so the power-history charge line and its max/min reflect the accurate value
     # rather than the inverter's own guess. Returns None until the BMS has a bank, or if disabled.
     def _bms_bank_soc():
         bp = getattr(app.state, "bms_poller", None)

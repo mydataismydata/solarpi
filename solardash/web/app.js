@@ -5,6 +5,9 @@ const C = {
   pv: "#FBBF24", load: "#9C8CFB", charge: "#34D399", discharge: "#FBBF24",
   accent: "#22D3EE", accent2: "#4F9CF9", acin1: "#2DD4BF", acin2: "#14B8A6",
   txt3: "#626C7B", line: "#262C37",
+  // Battery charge (%) line on the Power history chart. Not green like battery power, so the two
+  // battery lines stay apart; pink keeps >=3:1 contrast on both the dark and the light surface.
+  soc: "#EC4899",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -24,9 +27,7 @@ const msGauge = new DualGauge($("msGauge"), { id: "ms", max: 3000, unit: "W", su
 renderFlow($("flow"));
 
 let chart = null;
-let batteryChart = null;
 let activeWin = 86400;
-let activeBattWin = 86400;
 let activePeriod = "hour";
 // Which day/month/year the Energy-trends chart is centred on. null means "live" — always the
 // current day/month/year, so the default view rolls over at midnight without a reload. Drilling
@@ -322,31 +323,41 @@ function chartOpts(width) {
   return {
     width, height: 300, legend: { show: false },
     cursor: { y: false, points: { size: 6 } },
-    scales: { x: { time: true } },
+    // Power (W) auto-scales on the default "y" scale; battery charge gets its own fixed 0–100%.
+    scales: { x: { time: true }, pct: { range: [0, 100] } },
     series: [
       {},
       { label: "Solar", stroke: C.pv, width: 2, fill: "rgba(251,191,36,0.10)", spanGaps: false, show: seriesVisible("history", "pv") },
       { label: "Load", stroke: C.load, width: 2, spanGaps: false, show: seriesVisible("history", "load") },
       { label: "Battery", stroke: C.charge, width: 2, spanGaps: false, show: seriesVisible("history", "battery") },
+      { label: "Battery charge", scale: "pct", stroke: C.soc, width: 2, spanGaps: false, show: seriesVisible("history", "soc") },
     ],
     axes: [
       { ...axis },
       { ...axis, size: 52, values: (u, vals) => vals.map((v) => (Math.abs(v) >= 1000 ? v / 1000 + "k" : v)) },
+      // Charge on the right. No grid of its own, so the gridlines stay the power axis's.
+      { ...axis, scale: "pct", side: 1, size: 44, grid: { show: false }, values: (u, vals) => vals.map((v) => v + "%") },
     ],
   };
 }
 
-// Series shown in the Power-history chart, in uPlot series order; `idx` is the uPlot series index.
+// Series shown in the Power-history chart, in uPlot series order; `idx` is the uPlot series index
+// and `unit` is what it's plotted in (W on the left axis, % on the right).
 const HISTORY_SERIES = [
-  { key: "pv", idx: 1, label: "Solar PV", color: C.pv },
-  { key: "load", idx: 2, label: "Load", color: C.load },
-  { key: "battery", idx: 3, label: "Battery", color: C.charge },
+  { key: "pv", idx: 1, label: "Solar PV", color: C.pv, unit: "W" },
+  { key: "load", idx: 2, label: "Load", color: C.load, unit: "W" },
+  { key: "battery", idx: 3, label: "Battery", color: C.charge, unit: "W" },
+  { key: "soc", idx: 4, label: "Battery charge", color: C.soc, unit: "%" },
 ];
 
 function renderLegend() {
   $("legend").innerHTML = HISTORY_SERIES
-    .map((s) => `<span class="item${seriesVisible("history", s.key) ? "" : " off"}" data-key="${s.key}" title="Show/hide ${s.label}"><span class="swatch" style="background:${s.color}"></span>${s.label} (W)</span>`)
-    .join("");
+    .map((s) => `<span class="item${seriesVisible("history", s.key) ? "" : " off"}" data-key="${s.key}" title="Show/hide ${s.label}"><span class="swatch" style="background:${s.color}"></span>${s.label} (${s.unit})</span>`)
+    .join("") +
+    // Max/Min charge for the range shown, filled in by updateBatteryStats(). Not an .item, so
+    // clicking it doesn't toggle anything.
+    `<span class="lt-inline legend-stats" title="Highest and lowest battery charge over the selected range">` +
+    `<span class="lti-title">Charge</span><span class="lti">Max <b id="batt_max">—</b></span><span class="lti">Min <b id="batt_min">—</b></span></span>`;
 }
 
 // Make the Power-history legend clickable: each item shows/hides its line, and uPlot rescales the
@@ -366,16 +377,23 @@ function initLegend() {
 
 async function loadHistory(win) {
   const now = Math.floor(Date.now() / 1000);
-  const url = `api/history?fields=pv_power,load_total,battery_power&start=${now - win}&max_points=600`;
+  const url = `api/history?fields=pv_power,load_total,battery_power,bms_soc,battery_soc&start=${now - win}&max_points=600`;
   let payload;
   try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
 
+  // Battery charge: prefer the BMS bank SOC (accurate, coulomb-counted); fall back to the
+  // inverter's recorded value for older samples taken before the BMS was recording.
+  const bms = payload.series.bms_soc || [];
+  const inv = payload.series.battery_soc || [];
+  const soc = (payload.ts || []).map((_, i) => (bms[i] != null ? bms[i] : inv[i] != null ? inv[i] : null));
   const data = [
     payload.ts,
     payload.series.pv_power || [],
     payload.series.load_total || [],
     payload.series.battery_power || [],
+    soc,
   ];
+  updateBatteryStats(data[0], soc, win);
   hideEbarPopup();
   const width = $("chart").clientWidth || 800;
   if (chart) {
@@ -397,62 +415,15 @@ function onChartClick(e) {
   const w = (v) => (v == null ? "—" : Math.round(v).toLocaleString() + " W");
   const batt = chart.data[3][idx];
   const bw = batt == null ? "—" : (batt > 0 ? "+" : "") + Math.round(batt).toLocaleString() + " W";
+  const soc = chart.data[4][idx];
   const when = new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const html =
     `<div class="pop-title">${when}</div>` +
     `<div class="pop-row"><i style="background:${C.pv}"></i>Solar PV<b>${w(chart.data[1][idx])}</b></div>` +
     `<div class="pop-row"><i style="background:${C.load}"></i>Load<b>${w(chart.data[2][idx])}</b></div>` +
-    `<div class="pop-row"><i style="background:${C.charge}"></i>Battery<b>${bw}</b></div>`;
+    `<div class="pop-row"><i style="background:${C.charge}"></i>Battery<b>${bw}</b></div>` +
+    `<div class="pop-row"><i style="background:${C.soc}"></i>Battery charge<b>${soc == null ? "—" : Math.round(soc) + "%"}</b></div>`;
   showPopupAt(html, e.clientX, e.clientY);
-}
-
-// ---- battery history chart (state of charge, %) ---------------------------
-
-function batteryChartOpts(width) {
-  const axisStroke = cssVar("--txt3") || C.txt3;
-  const gridStroke = cssVar("--line") || C.line;
-  const axis = { stroke: axisStroke, grid: { stroke: gridStroke, width: 1 }, ticks: { stroke: gridStroke } };
-  return {
-    width, height: 300, legend: { show: false },
-    cursor: { y: false, points: { size: 6 } },
-    scales: { x: { time: true }, y: { range: [0, 100] } }, // charge is always 0–100%
-    series: [
-      {},
-      { label: "Charge", stroke: C.charge, width: 2, fill: "rgba(52,211,153,0.10)", spanGaps: false },
-    ],
-    axes: [
-      { ...axis },
-      { ...axis, size: 44, values: (u, vals) => vals.map((v) => v + "%") },
-    ],
-  };
-}
-
-function renderBatteryLegend() {
-  $("batteryLegend").innerHTML =
-    `<span class="item"><span class="swatch" style="background:${C.charge}"></span>Battery charge (%)</span>`;
-}
-
-async function loadBatteryHistory(win) {
-  const now = Math.floor(Date.now() / 1000);
-  const url = `api/history?fields=bms_soc,battery_soc&start=${now - win}&max_points=600`;
-  let payload;
-  try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
-
-  // Prefer the BMS bank SOC (accurate, coulomb-counted); fall back to the inverter's recorded
-  // value for older samples taken before the BMS was recording.
-  const bms = payload.series.bms_soc || [];
-  const inv = payload.series.battery_soc || [];
-  const soc = (payload.ts || []).map((_, i) => (bms[i] != null ? bms[i] : inv[i] != null ? inv[i] : null));
-  const data = [payload.ts, soc];
-  updateBatteryStats(data[0], data[1], win);
-  const width = $("batteryChart").clientWidth || 800;
-  if (batteryChart) {
-    batteryChart.setData(data);
-    batteryChart.setSize({ width, height: 300 });
-  } else {
-    batteryChart = new uPlot(batteryChartOpts(width), data, $("batteryChart"));
-    batteryChart.over.addEventListener("click", onBatteryChartClick);
-  }
 }
 
 // When a max/min occurred. Windows longer than a day include the date, since "@ 3:45 PM" alone
@@ -463,7 +434,7 @@ function atLabel(ts, win) {
   return win > 86400 ? `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${t}` : t;
 }
 
-// Header Max/Min charge for the window currently shown, each tagged with when it happened.
+// Max/Min charge for the window currently shown (next to the legend), each tagged with when it happened.
 function updateBatteryStats(ts, soc, win) {
   let maxV = -Infinity, minV = Infinity, maxTs = null, minTs = null;
   for (let i = 0; i < soc.length; i++) {
@@ -475,21 +446,6 @@ function updateBatteryStats(ts, soc, win) {
   if (maxTs == null) { $("batt_max").textContent = "—"; $("batt_min").textContent = "—"; return; }
   $("batt_max").textContent = `${Math.round(maxV)}% @ ${atLabel(maxTs, win)}`;
   $("batt_min").textContent = `${Math.round(minV)}% @ ${atLabel(minTs, win)}`;
-}
-
-// Click the Battery history to pin a popup with the charge at that moment.
-function onBatteryChartClick(e) {
-  if (!batteryChart) return;
-  const idx = batteryChart.cursor.idx;
-  if (idx == null) return;
-  e.stopPropagation();
-  const ts = batteryChart.data[0][idx];
-  const soc = batteryChart.data[1][idx];
-  const when = new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  const html =
-    `<div class="pop-title">${when}</div>` +
-    `<div class="pop-row"><i style="background:${C.charge}"></i>Charge<b>${soc == null ? "—" : Math.round(soc) + "%"}</b></div>`;
-  showPopupAt(html, e.clientX, e.clientY);
 }
 
 // ---- inverter AC-output control (emergency shutoff) -----------------------
@@ -865,7 +821,7 @@ function initMsERanges() {
 
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", batteryHistory: "solar.showBatteryHistory", msEnergy: "solar.showMsEnergy", minisplit: "solar.showMinisplit" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", history: "solar.showHistory", msEnergy: "solar.showMsEnergy", minisplit: "solar.showMinisplit" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
@@ -873,21 +829,18 @@ function applySettings() {
   const battery = getBool(SETTING.battery, true);
   const energy = getBool(SETTING.energy, true);
   const history = getBool(SETTING.history, true);
-  const batteryHistory = getBool(SETTING.batteryHistory, true);
   const msEnergy = getBool(SETTING.msEnergy, true);
   const minisplit = getBool(SETTING.minisplit, true);
   document.body.classList.toggle("hide-acin", !acin);
   document.body.classList.toggle("hide-battery", !battery);
   document.body.classList.toggle("hide-energy", !energy);
   document.body.classList.toggle("hide-history", !history);
-  document.body.classList.toggle("hide-battery-history", !batteryHistory);
   document.body.classList.toggle("hide-msenergy", !msEnergy);
   document.body.classList.toggle("hide-minisplit", !minisplit);
   $("toggleAcIn").checked = acin;
   $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
   $("toggleHistory").checked = history;
-  $("toggleBatteryHistory").checked = batteryHistory;
   $("toggleMsEnergy").checked = msEnergy;
   $("toggleMinisplit").checked = minisplit;
 }
@@ -904,7 +857,6 @@ function initSettings() {
   bind(SETTING.battery, "toggleBattery");
   bind(SETTING.energy, "toggleEnergy");
   bind(SETTING.history, "toggleHistory");
-  bind(SETTING.batteryHistory, "toggleBatteryHistory");
   bind(SETTING.msEnergy, "toggleMsEnergy");
   bind(SETTING.minisplit, "toggleMinisplit");
   $("unpairMsBtn").addEventListener("click", onUnpairClick);
@@ -947,9 +899,7 @@ function initTheme() {
     applyTheme(next);
     // uPlot paints axes/grid onto a canvas, so rebuild it to pick up the new theme colors.
     if (chart) { chart.destroy(); chart = null; }
-    if (batteryChart) { batteryChart.destroy(); batteryChart = null; }
     loadHistory(activeWin);
-    loadBatteryHistory(activeBattWin);
   });
 }
 
@@ -964,28 +914,14 @@ function initRanges() {
   });
 }
 
-function initBatteryRanges() {
-  $("bRanges").addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    document.querySelectorAll("#bRanges button").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    activeBattWin = Number(btn.dataset.win);
-    loadBatteryHistory(activeBattWin);
-  });
-}
-
 window.addEventListener("resize", () => {
   if (chart) chart.setSize({ width: $("chart").clientWidth || 800, height: 300 });
-  if (batteryChart) batteryChart.setSize({ width: $("batteryChart").clientWidth || 800, height: 300 });
 });
 
 initTheme();
 renderLegend();
 initLegend();
-renderBatteryLegend();
 initRanges();
-initBatteryRanges();
 initERanges();
 initEbarPopup($("ebars"));
 initMsERanges();
@@ -1006,7 +942,6 @@ loadBattery();
 loadAppliance();
 loadCurrent();
 loadHistory(activeWin);
-loadBatteryHistory(activeBattWin);
 loadToday();
 loadLifetime();
 loadEnergy(activePeriod);
@@ -1015,7 +950,6 @@ setInterval(loadCurrent, 5000);
 setInterval(loadAppliance, 5000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
-setInterval(() => loadBatteryHistory(activeBattWin), 30000);
 setInterval(loadToday, 60000);
 setInterval(loadLifetime, 60000);
 setInterval(() => loadEnergy(activePeriod), 60000);

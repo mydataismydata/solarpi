@@ -34,7 +34,7 @@ The header summarises the selected period: total input/output plus the peak (max
 
 ### Power history
 
-A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store. The lifetime totals in the header also carry the all-time peak Solar and Load power (e.g. `peak 2.39 kW`), which stays fixed as you change the range. Click a label in the legend to show/hide that line; the axis rescales to the remaining series and the choice is remembered.
+A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store. Power is read off the left axis in watts. The battery's state of charge is drawn on the same chart against a fixed 0–100 % axis on the right, taken from the BMS bank where it was recorded and from the inverter's own estimate for older samples. The end of the legend row shows the highest and lowest charge in the selected range, with when each happened. The lifetime totals in the header also carry the all-time peak Solar and Load power (e.g. `peak 2.39 kW`), which stays fixed as you change the range. Click a label in the legend to show/hide that line; the power axis rescales to the remaining series and the choice is remembered.
 
 | Last 24 hours | Last 7 days |
 |---------------|-------------|
