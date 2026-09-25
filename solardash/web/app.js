@@ -148,12 +148,17 @@ function updateTiles(d) {
     $("fault_sub").textContent = `Machine state ${state} · no active faults`;
   }
 
-  // freshness
+  // freshness — always the sample's own day and time ("9/25 4:38 AM"), never a relative "ago".
+  // Non-breaking spaces keep the day and the time each on one line, so a narrow header wraps
+  // only between them.
   const age = Math.floor(Date.now() / 1000) - d.ts;
-  const dot = $("liveDot");
-  if (age <= 30) { dot.className = "dot live"; $("status").textContent = "live · just now"; }
-  else if (age <= 120) { dot.className = "dot live"; $("status").textContent = `live · ${age}s ago`; }
-  else { dot.className = "dot stale"; $("status").textContent = `stale · ${Math.floor(age / 60)}m ago`; }
+  const at = new Date(d.ts * 1000);
+  const day = `${at.getMonth() + 1}/${at.getDate()}`;
+  const time = at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const nb = (s) => s.replace(/\s/g, "\u00a0");
+  const live = age <= 120;
+  $("liveDot").className = live ? "dot live" : "dot stale";
+  $("status").textContent = `${nb(`${live ? "live" : "stale"} · ${day}`)} ${nb(time)}`;
 }
 
 async function loadCurrent() {
