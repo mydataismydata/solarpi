@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .jbd import (
     CMD_BASIC,
@@ -24,6 +24,30 @@ from .jbd import (
 )
 
 CELL_NOMINAL_V = 3.2  # LiFePO4 nominal cell voltage, for capacity (kWh) derivation
+JBD_SERVICE_UUID = "0000ff00-0000-1000-8000-00805f9b34fb"
+
+
+def pick_char_uuids(services) -> Tuple[str, str]:
+    """Choose the (notify, write) characteristics for the JBD protocol on a connected BMS.
+
+    Most JBD/Xiaoxiang boards (the ECO-LFP48100 packs) use FF01 notify / FF02 write in service
+    FF00, but some (the BigBattery Kong Elite Max) put the same protocol on FF05 / FF06. Prefer the
+    standard pair when present; otherwise take FF00's notifying and writable characteristics; with
+    no FF00 service at all, fall back to the standard UUIDs."""
+    for svc in services or []:
+        if str(svc.uuid).lower() != JBD_SERVICE_UUID:
+            continue
+        chars = list(svc.characteristics)
+        uuids = {str(c.uuid).lower() for c in chars}
+        if NOTIFY_UUID in uuids and WRITE_UUID in uuids:
+            return NOTIFY_UUID, WRITE_UUID
+        notify = next((str(c.uuid).lower() for c in chars
+                       if {"notify", "indicate"} & set(c.properties)), None)
+        write = next((str(c.uuid).lower() for c in chars
+                      if {"write-without-response", "write"} & set(c.properties)), None)
+        if notify and write:
+            return notify, write
+    return NOTIFY_UUID, WRITE_UUID
 
 
 @dataclass
@@ -119,16 +143,17 @@ async def read_pack(address: str, name: Optional[str] = None, connect_timeout: f
 
     try:
         async with BleakClient(address, timeout=connect_timeout) as client:
-            await client.start_notify(NOTIFY_UUID, cb)
-            await client.write_gatt_char(WRITE_UUID, CMD_BASIC_INFO, response=False)
+            notify_uuid, write_uuid = pick_char_uuids(client.services)
+            await client.start_notify(notify_uuid, cb)
+            await client.write_gatt_char(write_uuid, CMD_BASIC_INFO, response=False)
             await asyncio.sleep(0.4)
-            await client.write_gatt_char(WRITE_UUID, CMD_CELL_VOLTS, response=False)
+            await client.write_gatt_char(write_uuid, CMD_CELL_VOLTS, response=False)
             try:
                 await asyncio.wait_for(done.wait(), timeout=reply_timeout)
             except asyncio.TimeoutError:
                 pass
             try:
-                await client.stop_notify(NOTIFY_UUID)
+                await client.stop_notify(notify_uuid)
             except Exception:
                 pass
     except Exception:

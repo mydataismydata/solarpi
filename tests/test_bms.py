@@ -6,8 +6,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from solardash.bms_client import PackSample, summarize
-from solardash.jbd import PackInfo
+from types import SimpleNamespace
+
+from solardash.bms_client import PackSample, pick_char_uuids, summarize
+from solardash.jbd import NOTIFY_UUID, WRITE_UUID, PackInfo
 
 
 def pack(addr, v, i, soc, residual, nominal, cells, temps, prot=0):
@@ -52,6 +54,36 @@ class BankSummaryTest(unittest.TestCase):
 
     def test_empty_bank(self):
         self.assertIsNone(summarize([None, None]))
+
+
+def _uuid(short):
+    return f"0000{short}-0000-1000-8000-00805f9b34fb"
+
+
+def _svc(short, chars):
+    return SimpleNamespace(uuid=_uuid(short),
+                           characteristics=[SimpleNamespace(uuid=_uuid(c), properties=props) for c, props in chars])
+
+
+class PickCharUuidsTest(unittest.TestCase):
+    def test_standard_jbd_pair(self):
+        svcs = [_svc("ff00", [("ff01", ["read", "notify"]), ("ff02", ["write-without-response"])])]
+        self.assertEqual(pick_char_uuids(svcs), (NOTIFY_UUID, WRITE_UUID))
+
+    def test_kong_ff05_ff06(self):
+        # the BigBattery Kong Elite Max's BMS, as its services read on the Pi
+        svcs = [
+            _svc("fa00", [("fa01", ["read", "write-without-response"])]),
+            _svc("180a", [("2a50", ["read"])]),
+            _svc("ff00", [("ff05", ["read", "notify"]), ("ff06", ["read", "write-without-response"])]),
+            _svc("1800", [("2a00", ["read", "notify"])]),
+        ]
+        self.assertEqual(pick_char_uuids(svcs), (_uuid("ff05"), _uuid("ff06")))
+
+    def test_no_ff00_service_falls_back_to_standard(self):
+        svcs = [_svc("180a", [("2a50", ["read"])])]
+        self.assertEqual(pick_char_uuids(svcs), (NOTIFY_UUID, WRITE_UUID))
+        self.assertEqual(pick_char_uuids(None), (NOTIFY_UUID, WRITE_UUID))
 
 
 if __name__ == "__main__":
