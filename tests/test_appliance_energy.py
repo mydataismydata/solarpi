@@ -77,9 +77,10 @@ class _Reading:
 
 
 class _FakeClient:
-    def __init__(self, readings):
+    def __init__(self, readings, device_id="dev"):
         self.readings = list(readings)
         self.i = 0
+        self.device_id = device_id
 
     async def read(self):
         r = self.readings[self.i]
@@ -133,9 +134,9 @@ class AppliancePollerCounterEnergyTest(unittest.IsolatedAsyncioTestCase):
         now[0] += 9999            # huge gap: the device counted the energy, so it must still record
         await poller.poll_once()
         b = store.appliance_energy_buckets("hour")
-        self.assertEqual(len(b), 1)
-        self.assertAlmostEqual(b[0]["solar_kwh"], 0.1, places=3)
-        self.assertAlmostEqual(b[0]["grid_kwh"], 0.3, places=3)
+        self.assertEqual(len(b), 4)  # spread over the hours the gap covers (t=1000..10999)
+        self.assertAlmostEqual(sum(x["solar_kwh"] for x in b), 0.1, places=3)
+        self.assertAlmostEqual(sum(x["grid_kwh"] for x in b), 0.3, places=3)
 
     async def test_counter_reset_is_skipped(self):
         store = TimeSeriesStore(":memory:")
@@ -146,6 +147,58 @@ class AppliancePollerCounterEnergyTest(unittest.IsolatedAsyncioTestCase):
         await poller.poll_once()
         now[0] += 60
         await poller.poll_once()
+        self.assertEqual(store.appliance_energy_buckets("hour"), [])
+
+    async def test_counters_survive_a_restart(self):
+        store = TimeSeriesStore(":memory:")
+        now = [1000]
+        first = AppliancePoller(_FakeClient([_Reading(_CounterStatus(1000.0, 1500.0))]), store=store, clock=lambda: now[0])
+        await first.poll_once()   # baseline, saved to the store
+        now[0] += 600
+        # a fresh poller (service restart) differences its first read against the saved counters
+        second = AppliancePoller(_FakeClient([_Reading(_CounterStatus(1100.0, 1900.0))]), store=store, clock=lambda: now[0])
+        await second.poll_once()
+        b = store.appliance_energy_buckets("hour")
+        self.assertAlmostEqual(sum(x["solar_kwh"] for x in b), 0.1, places=3)
+        self.assertAlmostEqual(sum(x["grid_kwh"] for x in b), 0.3, places=3)
+
+    async def test_long_outage_is_spread_evenly_over_its_hours(self):
+        store = TimeSeriesStore(":memory:")
+        start = BASE - (BASE % 3600)
+        now = [start]
+        # two days offline: +2 kWh solar, +150 kWh total (over the flat 100 kWh clamp, but a
+        # plausible ~3 kW average over 48 h) -> recorded, 1/48 in each hour
+        client = _FakeClient([_Reading(_CounterStatus(10_000.0, 20_000.0)), _Reading(_CounterStatus(12_000.0, 170_000.0))])
+        poller = AppliancePoller(client, store=store, clock=lambda: now[0])
+        await poller.poll_once()
+        now[0] += 48 * 3600
+        await poller.poll_once()
+        b = store.appliance_energy_buckets("hour")
+        self.assertEqual(len(b), 48)
+        for x in b:
+            self.assertAlmostEqual(x["solar_kwh"], 2.0 / 48, places=4)
+            self.assertAlmostEqual(x["grid_kwh"], 148.0 / 48, places=4)
+
+    async def test_implausible_jump_is_skipped(self):
+        store = TimeSeriesStore(":memory:")
+        now = [1000]
+        # +200 kWh in one minute can't be real -> skipped
+        client = _FakeClient([_Reading(_CounterStatus(0.0, 0.0)), _Reading(_CounterStatus(0.0, 200_000.0))])
+        poller = AppliancePoller(client, store=store, clock=lambda: now[0])
+        await poller.poll_once()
+        now[0] += 60
+        await poller.poll_once()
+        self.assertEqual(store.appliance_energy_buckets("hour"), [])
+
+    async def test_saved_counters_ignored_for_a_different_unit(self):
+        store = TimeSeriesStore(":memory:")
+        now = [1000]
+        old = AppliancePoller(_FakeClient([_Reading(_CounterStatus(1000.0, 1500.0))], device_id="old"), store=store, clock=lambda: now[0])
+        await old.poll_once()
+        now[0] += 600
+        # re-paired to another unit: its first read is a fresh baseline, not a delta against "old"
+        new = AppliancePoller(_FakeClient([_Reading(_CounterStatus(5000.0, 9000.0))], device_id="new"), store=store, clock=lambda: now[0])
+        await new.poll_once()
         self.assertEqual(store.appliance_energy_buckets("hour"), [])
 
 

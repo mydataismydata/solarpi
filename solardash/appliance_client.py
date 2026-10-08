@@ -24,6 +24,7 @@ DEFAULT_INTERVAL_S = 30.0
 DEFAULT_TIMEOUT_S = 5.0
 MAX_ENERGY_GAP_S = 300.0  # power-integration fallback: don't integrate across gaps longer than this
 COUNTER_MAX_JUMP_WH = 100000.0  # a single counter delta bigger than this is a reset/bad read -> skip
+APPLIANCE_MAX_W = 5000.0  # ...unless a long gap explains it: allow up to this average draw over the gap
 
 
 @dataclass
@@ -106,9 +107,12 @@ class AppliancePoller:
         self.raw_dps: Optional[Dict[str, object]] = None
         self.consecutive_failures = 0
         # energy-accrual state. Primary: last cumulative counters (DP 107 solar / DP 110 total Wh),
-        # differenced between reads. Fallback: trapezoidal integration of instantaneous power.
+        # differenced between reads and saved to the store so they survive a restart. Fallback:
+        # trapezoidal integration of instantaneous power.
         self._e_solar_c: Optional[float] = None
         self._e_total_c: Optional[float] = None
+        self._e_c_ts: Optional[int] = None
+        self._counters_loaded = False
         self._e_ts: Optional[int] = None
         self._e_solar = 0.0
         self._e_grid = 0.0
@@ -131,19 +135,31 @@ class AppliancePoller:
         Primary path: difference the unit's own cumulative Wh counters (solar_energy / total_energy;
         grid = total - solar). These are authoritative and robust to this Wi-Fi module's flaky
         polling — the energy is real no matter how far apart two successful reads land, so there is
-        no gap guard, only a reset/bad-read clamp. Falls back to integrating instantaneous power for
-        firmware that doesn't report the counters."""
+        no gap guard, only a reset/bad-read clamp. The last counters are saved to the store, so after
+        a restart or a long outage the first read picks up where the last one left off; the delta is
+        spread evenly over the hours since that read. Falls back to integrating instantaneous power
+        for firmware that doesn't report the counters."""
         if self.store is None:
             return
         solar_c = getattr(status, "solar_energy", None)
         total_c = getattr(status, "total_energy", None)
         if solar_c is not None and total_c is not None:
+            device_id = getattr(self.client, "device_id", None)
+            if self._e_solar_c is None and not self._counters_loaded:
+                self._counters_loaded = True
+                saved = self.store.load_appliance_counters(device_id)
+                if saved is not None:
+                    self._e_solar_c, self._e_total_c = saved["solar_wh"], saved["total_wh"]
+                    self._e_c_ts = int(saved["ts"])
             if self._e_solar_c is not None:
                 d_solar = solar_c - self._e_solar_c
                 d_total = total_c - self._e_total_c
-                if 0 <= d_solar < COUNTER_MAX_JUMP_WH and 0 <= d_total < COUNTER_MAX_JUMP_WH:
-                    self.store.accrue_appliance_wh(ts, d_solar, max(0.0, d_total - d_solar))
-            self._e_solar_c, self._e_total_c = solar_c, total_c
+                prev_ts = self._e_c_ts if self._e_c_ts is not None else ts
+                cap = max(COUNTER_MAX_JUMP_WH, (ts - prev_ts) / 3600.0 * APPLIANCE_MAX_W)
+                if 0 <= d_solar < cap and 0 <= d_total < cap:
+                    self.store.accrue_appliance_span(prev_ts, ts, d_solar, max(0.0, d_total - d_solar))
+            self._e_solar_c, self._e_total_c, self._e_c_ts = solar_c, total_c, ts
+            self.store.save_appliance_counters(device_id, ts, solar_c, total_c)
             return
 
         # Fallback: integrate instantaneous power (skips gaps that are probably downtime).

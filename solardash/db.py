@@ -133,6 +133,17 @@ class TimeSeriesStore:
                 "  solar_wh REAL NOT NULL DEFAULT 0,\n"
                 "  grid_wh REAL NOT NULL DEFAULT 0\n)"
             )
+            # The mini-split's last-read cumulative counters (Wh), one row. The AppliancePoller
+            # differences new reads against these, so keeping them on disk lets a service restart or
+            # a long Wi-Fi outage still be recovered from the unit's own counters once it answers.
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS appliance_counters (\n"
+                "  id INTEGER PRIMARY KEY CHECK (id = 1),\n"
+                "  device_id TEXT,\n"
+                "  ts INTEGER NOT NULL,\n"
+                "  solar_wh REAL NOT NULL,\n"
+                "  total_wh REAL NOT NULL\n)"
+            )
             # All-time peak instantaneous power (W): a single row holding the highest pv_power /
             # load_total ever sampled. Rolled forward on insert() so the lifetime-peak read is O(1)
             # (no full-table scan every minute) and survives sample pruning. Seeded from any history
@@ -290,6 +301,42 @@ class TimeSeriesStore:
                 (hour, solar, grid),
             )
             self._conn.commit()
+
+    def accrue_appliance_span(self, start_ts: int, end_ts: int, solar_wh: float, grid_wh: float) -> None:
+        """Spread mini-split energy (Wh) evenly over [start_ts, end_ts), split across the hour
+        buckets the span covers. A span inside one hour lands in that hour, like accrue_appliance_wh."""
+        if end_ts <= start_ts:
+            self.accrue_appliance_wh(end_ts, solar_wh, grid_wh)
+            return
+        span = float(end_ts - start_ts)
+        t = start_ts
+        while t < end_ts:
+            nxt = min(end_ts, t - (t % 3600) + 3600)
+            f = (nxt - t) / span
+            self.accrue_appliance_wh(t, solar_wh * f, grid_wh * f)
+            t = nxt
+
+    def save_appliance_counters(self, device_id: Optional[str], ts: int, solar_wh: float, total_wh: float) -> None:
+        """Remember the mini-split's last-read cumulative counters (Wh)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO appliance_counters (id, device_id, ts, solar_wh, total_wh) VALUES (1, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET device_id = excluded.device_id, ts = excluded.ts, "
+                "  solar_wh = excluded.solar_wh, total_wh = excluded.total_wh",
+                (device_id, ts, solar_wh, total_wh),
+            )
+            self._conn.commit()
+
+    def load_appliance_counters(self, device_id: Optional[str]) -> Optional[Dict[str, float]]:
+        """The saved counters as {ts, solar_wh, total_wh}, or None if none are saved or they belong
+        to a different unit (a re-pair must not difference one unit's counters against another's)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT device_id, ts, solar_wh, total_wh FROM appliance_counters WHERE id = 1"
+            ).fetchone()
+        if row is None or row["device_id"] != device_id:
+            return None
+        return {"ts": row["ts"], "solar_wh": row["solar_wh"], "total_wh": row["total_wh"]}
 
     def accrue_appliance(self, ts: int, dt_s: float, solar_w: float, grid_w: float) -> None:
         """Add the mini-split's energy from a dt_s-long interval (avg powers) into the hour bucket."""
