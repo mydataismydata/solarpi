@@ -72,12 +72,25 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(out["battery_eta_kind"], "empty")
         self.assertAlmostEqual(out["battery_eta_minutes"], 121, delta=2)
 
+    def test_charge_count_preferred_over_bms(self):
+        # The count from the last full charge (stamped on the sample) is shown; the BMS figure stays
+        # alongside, and the ETA follows the count (4.8 kWh * 30% = 1440 Wh / 1000 W ~ 86 min).
+        self.store.insert(InverterStatus(battery_soc=55, battery_voltage=50.0, battery_current=-20.0),
+                          ts=1, bms_soc=42.0, soc_count=30.0)
+        out = api.current_payload(self.store, self.catalog, battery_capacity_wh=4800, bms_soc=42.5)
+        self.assertEqual(out["battery_soc"], 30.0)
+        self.assertEqual(out["soc_source"], "count")
+        self.assertEqual(out["bms_soc"], 42.5)         # the live BMS reading, not the stored one
+        self.assertEqual(out["inverter_soc"], 55)
+        self.assertAlmostEqual(out["battery_eta_minutes"], 86, delta=2)
+
     def test_no_bms_soc_leaves_inverter_value(self):
         # Without a BMS reading, battery_soc stays the inverter's and no inverter_soc field appears.
         self.store.insert(InverterStatus(battery_soc=55), ts=1)
         out = api.current_payload(self.store, self.catalog)
         self.assertEqual(out["battery_soc"], 55)
         self.assertNotIn("inverter_soc", out)
+        self.assertEqual(out["soc_source"], "inverter")
 
     def test_history_columnar_shape(self):
         for i in range(3):

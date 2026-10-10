@@ -18,7 +18,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import api, cli
 from .appliance_manager import ApplianceManager
+from .bms_client import CELL_NOMINAL_V
 from .bms_poller import BmsPoller
+from .charge_counter import ChargeCounter, bank_key
 from .client import InverterClient, InverterControl
 from .config import Config
 from .db import TimeSeriesStore
@@ -26,6 +28,12 @@ from .faults import FaultCatalog
 from .poller import Poller
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+BANK_NOMINAL_V = 16 * CELL_NOMINAL_V  # 16S LiFePO4: 51.2 V
+
+
+def _capacity_ah(cfg: Config) -> float:
+    """The bank's real capacity in amp-hours: configured, else derived from the configured kWh."""
+    return cfg.battery_capacity_ah or cfg.battery_capacity_kwh * 1000 / BANK_NOMINAL_V
 
 
 def _start_mdns(port: int):
@@ -79,7 +87,13 @@ async def lifespan(app: FastAPI):
         bp = getattr(app.state, "bms_poller", None)
         return bp.bank.soc if (bp is not None and getattr(bp, "bank", None) is not None) else None
 
-    poller = Poller(client, store, interval_s=cfg.poll_interval_s, bms_soc_getter=_bms_bank_soc)
+    # Count the bank's charge from its last full charge; the BMS SOC drifts (see charge_counter.py).
+    counter = ChargeCounter(
+        store, bank_key(cfg.bms_addresses if cfg.bms_enabled else []), _capacity_ah(cfg),
+        full_v=cfg.battery_full_v,
+    )
+    poller = Poller(client, store, interval_s=cfg.poll_interval_s, bms_soc_getter=_bms_bank_soc,
+                    charge_counter=counter)
     # Shares the client (and thus its socket lock) with the poller, so an output command and a poll
     # read never talk to the dongle at once. Endpoint stays gated on cfg.inverter_control_enabled.
     inverter_control = InverterControl(client)
@@ -166,7 +180,10 @@ async def revalidate_static(request, call_next):
 
 
 def _battery_capacity_wh() -> float:
-    """Prefer the BMS-derived bank capacity, falling back to the configured value. Watt-hours."""
+    """The configured real capacity in Ah if set (it's what the charge count runs on), else the
+    BMS-derived bank capacity, falling back to the configured kWh. Watt-hours."""
+    if app.state.cfg.battery_capacity_ah:
+        return app.state.cfg.battery_capacity_ah * BANK_NOMINAL_V
     cap_kwh = app.state.cfg.battery_capacity_kwh
     bp = app.state.bms_poller
     if bp is not None and bp.bank is not None:
@@ -176,7 +193,8 @@ def _battery_capacity_wh() -> float:
 
 @app.get("/api/current")
 async def current():
-    # Prefer the BMS bank SOC (accurate, coulomb-counted) over the inverter's voltage-based guess.
+    # Prefer the charge count from the last full charge (on the latest sample), then the BMS bank
+    # SOC, then the inverter's voltage-based guess.
     bp = app.state.bms_poller
     bms_soc = bp.bank.soc if (bp is not None and getattr(bp, "bank", None) is not None) else None
     return api.current_payload(

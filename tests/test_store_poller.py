@@ -195,6 +195,38 @@ class PollerTest(unittest.TestCase):
         self.assertEqual(latest["bms_soc"], 42.0)     # BMS bank SOC recorded on the sample
         self.assertEqual(latest["battery_soc"], 87)   # inverter's own value kept alongside
 
+    def test_charge_count_stamped_on_sample(self):
+        from solardash.charge_counter import ChargeCounter
+
+        async def run():
+            store = TimeSeriesStore(":memory:")
+            client = _FakeClient([{0x0100: 87, 0x0101: 532, 0x0102: 50}])  # + battery current
+            counter = ChargeCounter(store, "bank", 100)
+            poller = Poller(client, store, clock=lambda: 1, bms_soc_getter=lambda: 42.0,
+                            charge_counter=counter)
+            await poller.poll_once()
+            return store.latest()
+
+        latest = asyncio.run(run())
+        self.assertEqual(latest["soc_count"], 42.0)   # a new bank's count starts from the BMS SOC
+        self.assertEqual(latest["bms_soc"], 42.0)
+
+    def test_charge_counter_error_does_not_break_poll(self):
+        class Boom:
+            def update(self, *a, **kw):
+                raise RuntimeError("bad sample")
+
+        async def run():
+            store = TimeSeriesStore(":memory:")
+            client = _FakeClient([{0x0100: 87, 0x0101: 532}])
+            poller = Poller(client, store, clock=lambda: 1, charge_counter=Boom())
+            result = await poller.poll_once()
+            return result, store.latest()
+
+        result, latest = asyncio.run(run())
+        self.assertIsNotNone(result)
+        self.assertIsNone(latest["soc_count"])
+
     def test_bms_soc_getter_error_does_not_break_poll(self):
         async def run():
             store = TimeSeriesStore(":memory:")

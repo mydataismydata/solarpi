@@ -11,6 +11,7 @@ import time
 from typing import Callable, Dict, Optional
 
 from . import inverter
+from .charge_counter import ChargeCounter
 from .client import InverterClient
 from .db import TimeSeriesStore
 
@@ -28,6 +29,7 @@ class Poller:
         clock: Callable[[], float] = time.time,
         on_sample: Optional[Callable[[int, inverter.InverterStatus], None]] = None,
         bms_soc_getter: Optional[Callable[[], Optional[float]]] = None,
+        charge_counter: Optional[ChargeCounter] = None,
     ):
         self.client = client
         self.store = store
@@ -37,6 +39,9 @@ class Poller:
         # Returns the current BMS bank SOC (accurate, coulomb-counted) to stamp on each sample, or
         # None when the BLE bank isn't available. Lets the power-history chart plot the real SOC.
         self.bms_soc_getter = bms_soc_getter
+        # Counts the bank's amp-hours from the last full charge (the BMS SOC drifts; see
+        # charge_counter.py). Stamped on each sample as soc_count; seeded from the BMS SOC if new.
+        self.charge_counter = charge_counter
         self._last_raw: Optional[Dict[int, int]] = None
         self.last_ts: Optional[int] = None
         self.last_status: Optional[inverter.InverterStatus] = None
@@ -64,7 +69,8 @@ class Poller:
         self.consecutive_failures = 0
         status = inverter.decode(merged)
         ts = int(self.clock())
-        self.store.insert(status, ts=ts, bms_soc=self._read_bms_soc())
+        bms_soc = self._read_bms_soc()
+        self.store.insert(status, ts=ts, bms_soc=bms_soc, soc_count=self._count_charge(ts, status, bms_soc))
         self._accrue_energy(ts, status)
         self.last_ts, self.last_status = ts, status
         if self.on_sample:
@@ -78,6 +84,15 @@ class Poller:
             return None
         try:
             return self.bms_soc_getter()
+        except Exception:
+            return None
+
+    def _count_charge(self, ts: int, status: inverter.InverterStatus, bms_soc: Optional[float]) -> Optional[float]:
+        """Advance the charge count with this sample. Like the BMS getter, it must never break the poll."""
+        if self.charge_counter is None:
+            return None
+        try:
+            return self.charge_counter.update(ts, status.battery_voltage, status.battery_current, seed=bms_soc)
         except Exception:
             return None
 

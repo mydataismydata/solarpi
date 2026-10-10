@@ -119,6 +119,12 @@ class Config:
     # Usable battery bank capacity (kWh) for the time-to-full/empty estimate. Used only as a
     # fallback — when the BMS is connected, capacity is auto-derived from the packs' rated Ah.
     battery_capacity_kwh: float = 4.8
+    # The bank's real capacity (Ah) for counting its charge from the last full charge (ChargeCounter)
+    # and for the time-to-full/empty estimate. 0 = derive it from battery_capacity_kwh at 51.2 V.
+    # Can differ from the BMS rating: the 600 Ah rack delivers ~640 Ah.
+    battery_capacity_ah: float = 0.0
+    # Bank volts that, with the charge current tapered to near zero, mark a full charge.
+    battery_full_v: float = 55.0
     # JBD BMS (BLE) bank
     bms_enabled: bool = True
     bms_interval_s: float = 60.0
@@ -156,6 +162,8 @@ class Config:
             db_path=os.environ.get("SOLAR_DB_PATH", cls.db_path),
             retention_days=int(os.environ.get("SOLAR_RETENTION_DAYS", cls.retention_days)),
             battery_capacity_kwh=float(os.environ.get("SOLAR_BATTERY_CAPACITY_KWH", cls.battery_capacity_kwh)),
+            battery_capacity_ah=float(os.environ.get("SOLAR_BATTERY_CAPACITY_AH", cls.battery_capacity_ah)),
+            battery_full_v=float(os.environ.get("SOLAR_BATTERY_FULL_V", cls.battery_full_v)),
             bms_enabled=os.environ.get("SOLAR_BMS_ENABLED", "1") not in ("0", "false", "False"),
             bms_interval_s=float(os.environ.get("SOLAR_BMS_INTERVAL", cls.bms_interval_s)),
             bms_config_path=bms_file,

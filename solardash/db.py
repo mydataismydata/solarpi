@@ -24,6 +24,7 @@ COLUMNS = [
     ("battery_power", "REAL"),
     ("battery_temp", "REAL"),
     ("bms_soc", "REAL"),  # BMS bank SOC (%), stamped from the BLE poller when present (not an inverter field)
+    ("soc_count", "REAL"),  # bank SOC (%) counted in amp-hours from the last full charge (ChargeCounter)
     ("pv1_voltage", "REAL"),
     ("pv1_current", "REAL"),
     ("pv2_voltage", "REAL"),
@@ -144,6 +145,15 @@ class TimeSeriesStore:
                 "  solar_wh REAL NOT NULL,\n"
                 "  total_wh REAL NOT NULL\n)"
             )
+            # The ChargeCounter's running count per bank (keyed by its BMS addresses), so a restart or a
+            # swap to the other bank and back resumes the count instead of starting over.
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS charge_counter (\n"
+                "  bank TEXT PRIMARY KEY,\n"
+                "  ts INTEGER NOT NULL,\n"
+                "  soc REAL NOT NULL,\n"
+                "  last_full_ts INTEGER\n)"
+            )
             # All-time peak instantaneous power (W): a single row holding the highest pv_power /
             # load_total ever sampled. Rolled forward on insert() so the lifetime-peak read is O(1)
             # (no full-table scan every minute) and survives sample pruning. Seeded from any history
@@ -160,11 +170,13 @@ class TimeSeriesStore:
             )
             self._conn.commit()
 
-    def insert(self, status: InverterStatus, ts: Optional[int] = None, bms_soc: Optional[float] = None) -> int:
+    def insert(self, status: InverterStatus, ts: Optional[int] = None, bms_soc: Optional[float] = None,
+               soc_count: Optional[float] = None) -> int:
         if ts is None:
             ts = int(time.time())
         row = status_to_row(status)
         row["bms_soc"] = bms_soc  # not an InverterStatus field; the poller supplies the BMS bank SOC
+        row["soc_count"] = soc_count  # likewise, from the poller's ChargeCounter
         cols = ["ts"] + COLUMN_NAMES
         placeholders = ", ".join("?" for _ in cols)
         values = [ts] + [row[name] for name in COLUMN_NAMES]
@@ -337,6 +349,27 @@ class TimeSeriesStore:
         if row is None or row["device_id"] != device_id:
             return None
         return {"ts": row["ts"], "solar_wh": row["solar_wh"], "total_wh": row["total_wh"]}
+
+    def save_charge_state(self, bank: str, ts: int, soc: float, last_full_ts: Optional[int]) -> None:
+        """Remember a bank's counted SOC (%) as of ts, and when it was last full."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO charge_counter (bank, ts, soc, last_full_ts) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(bank) DO UPDATE SET ts = excluded.ts, soc = excluded.soc, "
+                "  last_full_ts = excluded.last_full_ts",
+                (bank, ts, soc, last_full_ts),
+            )
+            self._conn.commit()
+
+    def load_charge_state(self, bank: str) -> Optional[Dict[str, object]]:
+        """A bank's saved count as {ts, soc, last_full_ts}, or None if it has never been counted."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ts, soc, last_full_ts FROM charge_counter WHERE bank = ?", (bank,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"ts": row["ts"], "soc": row["soc"], "last_full_ts": row["last_full_ts"]}
 
     def accrue_appliance(self, ts: int, dt_s: float, solar_w: float, grid_w: float) -> None:
         """Add the mini-split's energy from a dt_s-long interval (avg powers) into the hour bucket."""

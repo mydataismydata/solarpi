@@ -44,10 +44,11 @@ def current_payload(
 ) -> Dict[str, object]:
     """Latest snapshot for the live tiles, with faults annotated and a battery ETA.
 
-    When a BMS bank SOC is supplied it replaces the inverter's own `battery_soc`: each pack
-    coulomb-counts, so the BMS is far more accurate than the inverter's voltage-based guess (which
-    also reads wrong after the bank's capacity changes). The inverter's own figure is preserved as
-    `inverter_soc`. This mirrors how the UI already trusts the BMS temperature over the inverter's.
+    The shown `battery_soc` is, in order of preference: the latest sample's `soc_count` (amp-hours
+    counted from the last full charge — see charge_counter.py), the supplied BMS bank SOC, then the
+    inverter's own voltage-based guess. The BMS coulomb-counts too, but the main rack's packs drift
+    high by 1-2 points a day between full charges and stall near empty. The BMS figure stays
+    available as `bms_soc` and the inverter's as `inverter_soc`; `soc_source` names the one shown.
     """
     latest = store.latest()
     if latest is None:
@@ -63,12 +64,18 @@ def current_payload(
         v = out.get(f"pv{n}_voltage")
         i = out.get(f"pv{n}_current")
         out[f"pv{n}_power"] = round(v * i, 1) if (v is not None and i is not None) else None
-    # Prefer the BMS bank SOC over the inverter's own estimate (see docstring), keeping the
-    # inverter's figure as inverter_soc. Compute the ETA from whichever SOC we end up showing so
-    # the number and its time-to-full/empty stay consistent.
+    # Prefer the charge count, then the BMS bank SOC, over the inverter's own estimate (see
+    # docstring), keeping the inverter's figure as inverter_soc. Compute the ETA from whichever SOC
+    # we end up showing so the number and its time-to-full/empty stay consistent.
+    count = out.get("soc_count")
     if bms_soc is not None:
+        out["bms_soc"] = bms_soc
+    if count is not None or bms_soc is not None:
         out["inverter_soc"] = out.get("battery_soc")
-        out["battery_soc"] = bms_soc
+        out["battery_soc"] = count if count is not None else bms_soc
+        out["soc_source"] = "count" if count is not None else "bms"
+    else:
+        out["soc_source"] = "inverter"
     out["battery_eta_minutes"], out["battery_eta_kind"] = _battery_eta(out, battery_capacity_wh)
     # Whether the remote AC-output control is enabled, and whether the output is currently live
     # (inferred from L1 output voltage) so the UI can show/label the power button.

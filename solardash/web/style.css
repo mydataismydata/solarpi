@@ -196,6 +196,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .socbar-seg { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(5% - 1px), rgba(9,11,15,0.5) calc(5% - 1px), rgba(9,11,15,0.5) 5%); pointer-events: none; }
 
 .batt-eta { font-family: var(--mono); font-size: 13.5px; font-weight: 600; margin-top: 9px; color: var(--txt2); font-variant-numeric: tabular-nums; }
+.batt-src { font-size: 12px; margin-top: 4px; color: var(--txt3); }
 .batt-foot { display: flex; margin-top: auto; padding-top: 14px; }
 .batt-foot > div { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; }
 .batt-foot > div + div { border-left: 1px solid var(--line); }

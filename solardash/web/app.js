@@ -116,6 +116,13 @@ function updateTiles(d) {
   watts.className = "batt-watts " + (charging ? "val-pos" : "val-neg");
   setPill($("batt_pill"), charging ? "Charging" : "Discharging", charging ? "green" : "amber");
   setSocBar($("socbar_fill"), d.battery_soc, (d.battery_soc ?? 100) <= 15 ? C.discharge : tone);
+  // Where the shown % comes from. The rack's BMSes drift between full charges, so say what they read.
+  const src = $("batt_src");
+  if (d.soc_source === "count") {
+    src.textContent = d.bms_soc != null ? `Counted from last full charge · BMS reads ${fmt(d.bms_soc, 0)}%` : "Counted from last full charge";
+  } else {
+    src.textContent = d.soc_source === "inverter" ? "Inverter estimate" : "";
+  }
   const etaEl = $("batt_eta");
   if (d.battery_eta_minutes == null) {
     etaEl.textContent = "holding · idle";
@@ -382,15 +389,16 @@ function initLegend() {
 
 async function loadHistory(win) {
   const now = Math.floor(Date.now() / 1000);
-  const url = `api/history?fields=pv_power,load_total,battery_power,bms_soc,battery_soc&start=${now - win}&max_points=600`;
+  const url = `api/history?fields=pv_power,load_total,battery_power,soc_count,bms_soc,battery_soc&start=${now - win}&max_points=600`;
   let payload;
   try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
 
-  // Battery charge: prefer the BMS bank SOC (accurate, coulomb-counted); fall back to the
-  // inverter's recorded value for older samples taken before the BMS was recording.
+  // Battery charge: prefer the count from the last full charge, then the BMS bank SOC; fall back
+  // to the inverter's recorded value for older samples taken before either was recording.
+  const cnt = payload.series.soc_count || [];
   const bms = payload.series.bms_soc || [];
   const inv = payload.series.battery_soc || [];
-  const soc = (payload.ts || []).map((_, i) => (bms[i] != null ? bms[i] : inv[i] != null ? inv[i] : null));
+  const soc = (payload.ts || []).map((_, i) => (cnt[i] != null ? cnt[i] : bms[i] != null ? bms[i] : inv[i] != null ? inv[i] : null));
   const data = [
     payload.ts,
     payload.series.pv_power || [],

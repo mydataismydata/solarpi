@@ -34,7 +34,7 @@ The header summarises the selected period: total input/output plus the peak (max
 
 ### Power history
 
-A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store. Power is read off the left axis in watts. The battery's state of charge is drawn on the same chart against a fixed 0–100 % axis on the right, taken from the BMS bank where it was recorded and from the inverter's own estimate for older samples. The end of the legend row shows the highest and lowest charge in the selected range, with when each happened. The lifetime totals in the header also carry the all-time peak Solar and Load power (e.g. `peak 2.39 kW`), which stays fixed as you change the range. Click a label in the legend to show/hide that line; the power axis rescales to the remaining series and the choice is remembered.
+A rolling line chart of Solar / Load / Battery power, zoomable from the last hour out to 30 days (1H · 6H · 24H · 7D · 30D), reconstructed from the SQLite time-series store. Power is read off the left axis in watts. The battery's state of charge is drawn on the same chart against a fixed 0–100 % axis on the right, taken from the charge count (see "Battery charge %") where it was recorded, then the BMS bank, and the inverter's own estimate for older samples. The end of the legend row shows the highest and lowest charge in the selected range, with when each happened. The lifetime totals in the header also carry the all-time peak Solar and Load power (e.g. `peak 2.39 kW`), which stays fixed as you change the range. Click a label in the legend to show/hide that line; the power axis rescales to the remaining series and the choice is remembered.
 
 | Last 24 hours | Last 7 days |
 |---------------|-------------|
@@ -345,7 +345,24 @@ SOLAR_INVERTER_CONTROL=0
 # only a legacy fallback used when packs.conf is absent.
 SOLAR_BMS_ADDRESSES=AA:BB:CC:DD:EE:01,AA:BB:CC:DD:EE:02
 SOLAR_BMS_POSITIONS=AA:BB:CC:DD:EE:01=1,AA:BB:CC:DD:EE:02=2
+
+# The bank's real capacity in amp-hours. The shown charge % is counted from the last full
+# charge against this, so set what the bank actually delivers, not just its rating.
+SOLAR_BATTERY_CAPACITY_AH=640
+SOLAR_BATTERY_FULL_V=55.0            # volts that, with the charge current near zero, mean full
 ```
+
+#### Battery charge %
+
+The BMS packs count their own charge, but on a rack of parallel packs their sum drifts: here it
+read 1–2 points high per day between full charges (25 points high after 25 days without one) and
+stalled near empty while the packs were still delivering. So the dashboard counts it itself from
+the inverter's battery current: it resets to 100 % whenever the bank is full (at or above
+`SOLAR_BATTERY_FULL_V` with under 5 A flowing, held for a minute), then adds each reading's
+amp-hours against `SOLAR_BATTERY_CAPACITY_AH`. The count is kept per bank (by BMS addresses),
+survives restarts, and resumes when you swap banks back. A bank that has never been counted
+starts from its BMS reading. The Battery bank panel shows what the BMS reads beside the count.
+`deploy/backfill_soc_count.py` replays stored history through the same counter.
 
 #### Battery packs (`packs.conf`)
 
