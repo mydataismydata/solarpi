@@ -171,7 +171,23 @@ function tempRangeCF(lo, hi) {
   return `${Number(lo).toFixed(1)}–${Number(hi).toFixed(1)}°C / ${cToF(lo)}–${cToF(hi)}°F`;
 }
 
-/* Battery detail: each pack with its own SOC, using the same segmented battery-bar graphic. */
+/* Battery detail: each pack led by what it measures (its lowest cell, a bar per cell, its current),
+   with the pack's own % below as an estimate. LiFePO4 cells are near-flat in voltage through the middle,
+   so the bars barely move there; they matter at the ends, where the packs' own counts are least
+   trustworthy (they drift high between full charges). */
+const CELL_BAR_MIN = 2.8, CELL_BAR_MAX = 3.6;   // bar scale (V)
+const CELL_LOW_WARN = 3.0, CELL_LOW_ALARM = 2.8;  // ~nearly empty under a light load / at the cutoff
+const CELL_HIGH_WARN = 3.55, CELL_HIGH_ALARM = 3.62;
+function cellTone(v) {
+  if (v == null) return "";
+  if (v <= CELL_LOW_ALARM || v >= CELL_HIGH_ALARM) return "bd-cell-alarm";
+  if (v < CELL_LOW_WARN || v > CELL_HIGH_WARN) return "bd-cell-warn";
+  return "";
+}
+function cellBarPct(v) {
+  return Math.max(4, Math.min(100, ((v - CELL_BAR_MIN) / (CELL_BAR_MAX - CELL_BAR_MIN)) * 100));
+}
+
 function renderBatteryDetail(container, d) {
   if (!d || !d.available || !d.packs || !d.packs.length) {
     container.innerHTML = '<div class="bd-empty">Battery (BMS) — waiting for first BLE read…</div>';
@@ -180,24 +196,34 @@ function renderBatteryDetail(container, d) {
   // Order the packs by their position in the parallel group (#1 first); unknowns last.
   const cards = [...d.packs].sort((a, b) => (a.parallel ?? 99) - (b.parallel ?? 99)).map((p) => {
     const charging = (p.current || 0) >= 0;
-    const fill = p.soc <= 15 ? "#FBBF24" : charging ? "#34D399" : "#FBBF24"; // bar fill (bright reads fine)
     const cls = charging ? "val-pos" : "val-neg"; // theme-aware readable text color
-    const soc = Math.max(0, Math.min(100, p.soc));
     const par = p.parallel ? `<span class="bd-pack-par">#${p.parallel}</span> ` : "";
     const reasons = protReasons(p.protection || 0);
     const hard = (p.protection || 0) & ~PROT_SOFT; // any bit outside the normal voltage cutoffs
     const fault = reasons.length
       ? ` · <span class="${hard ? "bd-fault" : "bd-prot"}">${reasons.join(", ")}</span>`
       : "";
+    const cells = p.cells || [];
+    const lo = p.cell_min, hi = p.cell_max;
+    const strip = cells.length
+      ? `<div class="bd-cells">${cells.map((v, i) =>
+          `<i class="${cellTone(v)}" style="height:${cellBarPct(v)}%" title="Cell ${i + 1}: ${v.toFixed(3)} V"></i>`).join("")}</div>`
+      : '<div class="bd-cells bd-cells-none">no cell reading this time</div>';
+    const range = cells.length
+      ? `Cells ${lo.toFixed(3)}–${hi.toFixed(3)} V · spread ${Math.round((hi - lo) * 1000)} mV`
+      : "Cells —";
     return `<div class="bd-pack">
-        <div class="bd-pack-head"><span class="bd-pack-name">${par}${p.name}</span><span class="bd-pack-soc ${cls}">${p.soc}<small>%</small></span></div>
-        <div class="socbar"><div class="socbar-fill" style="width:${soc}%;background:${fill}"></div><div class="socbar-seg"></div></div>
-        <div class="bd-pack-stats">${p.voltage.toFixed(2)} V · <span class="${cls}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(1)} A</span> · ${tempRangeCF(p.temp_min, p.temp_max)}${fault}</div>
+        <div class="bd-pack-head"><span class="bd-pack-name">${par}${p.name}</span><span class="bd-pack-cell ${cellTone(lo)}" title="Lowest cell">${lo != null ? lo.toFixed(3) : "—"}<small> V</small></span></div>
+        ${strip}
+        <div class="bd-pack-stats">${range}</div>
+        <div class="bd-pack-stats">${p.voltage.toFixed(2)} V · <span class="${cls}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(2)} A</span> · ${tempRangeCF(p.temp_min, p.temp_max)}${fault}</div>
+        <div class="bd-pack-est">Pack's own estimate ${p.soc}% · ${p.residual_ah.toFixed(1)} Ah</div>
       </div>`;
   }).join("");
   // Cap the single-row layout at 6 columns — past that the cards get too narrow to read.
   const cols = Math.min(d.packs.length, 6);
-  container.innerHTML = `<div class="bd-packs" style="--bd-cols:${cols}">${cards}</div>`;
+  container.innerHTML = `<div class="bd-packs" style="--bd-cols:${cols}">${cards}</div>` +
+    '<div class="bd-note">Cell voltages and current are measured. Each pack\'s % is its own running count, which drifts high between full charges; the bank % above is counted from the last full charge.</div>';
 }
 
 /* Power-flow diagram — web port of FlowDiagram (ui/SolarFlow.kt): Solar → Inverter → Battery

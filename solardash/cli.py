@@ -492,23 +492,49 @@ def _power_history(hist, life):
     return head + svg + legend + '</section>'
 
 
+# Cell-voltage thresholds and bar scale, matching renderBatteryDetail in web/components.js.
+CELL_BAR_MIN, CELL_BAR_MAX = 2.8, 3.6
+CELL_LOW_WARN, CELL_LOW_ALARM, CELL_HIGH_WARN, CELL_HIGH_ALARM = 3.0, 2.8, 3.55, 3.62
+
+
+def _cell_tone(v):
+    if v is None:
+        return ""
+    if v <= CELL_LOW_ALARM or v >= CELL_HIGH_ALARM:
+        return "bd-cell-alarm"
+    if v < CELL_LOW_WARN or v > CELL_HIGH_WARN:
+        return "bd-cell-warn"
+    return ""
+
+
 def _pack_card(p):
-    """One battery pack, using the dashboard's bd-pack + socbar markup."""
-    soc_n = p.get("soc")
-    soc = max(0.0, min(100.0, soc_n or 0))
+    """One battery pack, using the dashboard's bd-pack markup: lowest cell, a bar per cell, then the
+    pack's own % as an estimate."""
     charging = (p.get("current") or 0) >= 0
-    fill = "#FBBF24" if (soc_n or 0) <= 15 else ("#34D399" if charging else "#FBBF24")
     cls = "val-pos" if charging else "val-neg"
     par = f'<span class="bd-pack-par">#{p["parallel"]}</span> ' if p.get("parallel") else ""
     a = p.get("current")
+    cells = p.get("cells") or []
+    lo, hi = p.get("cell_min"), p.get("cell_max")
+    if cells:
+        bars = "".join(
+            f'<i class="{_cell_tone(v)}" style="height:'
+            f'{max(4.0, min(100.0, (v - CELL_BAR_MIN) / (CELL_BAR_MAX - CELL_BAR_MIN) * 100)):.0f}%"></i>'
+            for v in cells)
+        strip = f'<div class="bd-cells">{bars}</div>'
+        rng = f"Cells {lo:.3f}–{hi:.3f} V · spread {round((hi - lo) * 1000)} mV"
+    else:
+        strip = '<div class="bd-cells bd-cells-none">no cell reading this time</div>'
+        rng = "Cells —"
     return (f'<div class="bd-pack"><div class="bd-pack-head">'
             f'<span class="bd-pack-name">{par}{html.escape(str(p.get("name", "")))}</span>'
-            f'<span class="bd-pack-soc {cls}">{fmt(soc_n)}<small>%</small></span></div>'
-            f'<div class="socbar"><div class="socbar-fill" style="width:{soc:.0f}%;background:{fill}"></div>'
-            f'<div class="socbar-seg"></div></div>'
+            f'<span class="bd-pack-cell {_cell_tone(lo)}">{fmt(lo, 3)}<small> V</small></span></div>'
+            f'{strip}<div class="bd-pack-stats">{rng}</div>'
             f'<div class="bd-pack-stats">{fmt(p.get("voltage"), 2)} V · '
-            f'<span class="{cls}">{"+" if (a or 0) >= 0 else ""}{fmt(a, 1)} A</span> · '
-            f'{fmt(p.get("temp_max"), 1)}°C</div></div>')
+            f'<span class="{cls}">{"+" if (a or 0) >= 0 else ""}{fmt(a, 2)} A</span> · '
+            f'{fmt(p.get("temp_max"), 1)}°C</div>'
+            f'<div class="bd-pack-est">Pack\'s own estimate {fmt(p.get("soc"))}% · '
+            f'{fmt(p.get("residual_ah"), 1)} Ah</div></div>')
 
 
 def snapshot_doc(cur, today, hourly, life, batt, hist):
@@ -630,7 +656,7 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
         packs = sorted(packs, key=lambda p: p.get("parallel") if p.get("parallel") is not None else 99)
         cols = min(len(packs), 6)  # matches the dashboard's single-row cap in style.css
         detail_html = ('<section class="card battery-detail-card"><div class="chart-head">'
-                       '<h2>Batteries · Per-pack state of charge</h2></div>'
+                       '<h2>Batteries · Per pack</h2></div>'
                        f'<div class="bd-packs" style="--bd-cols:{cols}">'
                        f'{"".join(_pack_card(p) for p in packs)}</div></section>')
     else:
