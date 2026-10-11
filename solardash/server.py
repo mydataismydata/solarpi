@@ -138,6 +138,7 @@ async def lifespan(app: FastAPI):
     app.state.catalog = catalog
     app.state.cfg = cfg
     app.state.poller = poller
+    app.state.charge_counter = counter
     app.state.bms_poller = bms_poller
     app.state.appliance_manager = appliance_manager
     app.state.inverter_control = inverter_control
@@ -208,7 +209,8 @@ async def current():
 
 @app.get("/api/battery")
 async def battery():
-    return api.battery_payload(app.state.bms_poller)
+    counter = app.state.charge_counter
+    return api.battery_payload(app.state.bms_poller, soc_count=counter.value(), capacity_ah=counter.capacity_ah)
 
 
 @app.post("/api/snapshot")

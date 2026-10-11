@@ -46,6 +46,18 @@ class BatteryApiTest(unittest.TestCase):
         self.assertEqual(len(p1["cells"]), 16)
         self.assertEqual(p1["temp_max"], 26.0)
         self.assertFalse(p1["has_fault"])
+        self.assertIsNone(p1["count_ah"])   # no charge count supplied
+
+    def test_count_split_across_packs(self):
+        # 16 % of a 640 Ah bank = 102.4 Ah, split evenly over the two packs
+        packs = [
+            pack("AA:1", "p1", 31, 31.0, [3.24] * 16, [25.0]),
+            pack("AA:2", "p2", 44, 44.0, [3.24] * 16, [25.0]),
+        ]
+        out = api.battery_payload(_FakePoller(packs), soc_count=16.0, capacity_ah=640)
+        self.assertEqual(out["bank"]["count_ah"], 102.4)
+        self.assertEqual([p["count_ah"] for p in out["packs"]], [51.2, 51.2])
+        self.assertEqual(out["packs"][0]["residual_ah"], 31.0)   # the pack's own figure kept
 
 
 if __name__ == "__main__":

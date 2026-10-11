@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional, Tuple
 
+from .bms_client import CELL_NOMINAL_V
 from .db import NUMERIC_COLUMNS, TimeSeriesStore
 from .faults import FaultCatalog
 
@@ -162,7 +163,8 @@ def snapshot_inputs(
     today = next((b for b in days if b.get("bucket") == day_key), {})
     hourly = energy_payload(store, "hour", start=today_mid)["buckets"]
     life = lifetime_payload(store)
-    batt = battery_payload(bms_poller)
+    capacity_ah = battery_capacity_wh / (16 * CELL_NOMINAL_V) if battery_capacity_wh else None
+    batt = battery_payload(bms_poller, soc_count=cur.get("soc_count"), capacity_ah=capacity_ah)
     now_s = int(time.time())
     hist = history_payload(
         store, ["pv_power", "load_total", "battery_power"], start=now_s - 6 * 3600, max_points=360
@@ -170,11 +172,19 @@ def snapshot_inputs(
     return cur, today, hourly, life, batt, hist
 
 
-def battery_payload(poller) -> Dict[str, object]:
-    """Latest BMS snapshot: bank summary + per-pack detail (cells, temps, SOC)."""
+def battery_payload(poller, soc_count: Optional[float] = None,
+                    capacity_ah: Optional[float] = None) -> Dict[str, object]:
+    """Latest BMS snapshot: bank summary + per-pack detail (cells, temps, SOC).
+
+    With the bank's counted SOC and real capacity, each pack also gets `count_ah`: its share of the
+    counted amp-hours. Packs wired in parallel sit at the same voltage and so the same real charge,
+    so the count splits evenly across the configured packs (including any that missed this read)."""
     if poller is None or getattr(poller, "bank", None) is None:
         return {"available": False}
     b = poller.bank
+    bank_ah = soc_count / 100 * capacity_ah if (soc_count is not None and capacity_ah) else None
+    n_packs = len(getattr(poller, "addresses", None) or poller.packs) or 1
+    pack_ah = round(bank_ah / n_packs, 1) if bank_ah is not None else None
     packs = []
     for s in poller.packs:
         if s is None:
@@ -200,6 +210,7 @@ def battery_payload(poller) -> Dict[str, object]:
             "temp_min": min(temps) if temps else None,
             "temp_max": max(temps) if temps else None,
             "has_fault": s.info.has_fault,
+            "count_ah": pack_ah,
         })
     return {
         "available": True,
@@ -213,6 +224,8 @@ def battery_payload(poller) -> Dict[str, object]:
             "nominal_ah": b.nominal_ah,
             "residual_ah": b.residual_ah,
             "capacity_kwh": b.capacity_kwh,
+            "count_soc": soc_count,
+            "count_ah": round(bank_ah, 1) if bank_ah is not None else None,
             "cell_min": b.cell_min,
             "cell_max": b.cell_max,
             "cell_delta": b.cell_delta,

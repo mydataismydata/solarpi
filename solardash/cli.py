@@ -508,8 +508,8 @@ def _cell_tone(v):
 
 
 def _pack_card(p):
-    """One battery pack, using the dashboard's bd-pack markup: lowest cell, a bar per cell, then the
-    pack's own % as an estimate."""
+    """One battery pack, using the dashboard's bd-pack markup: pack volts/amps and its share of the
+    counted Ah on top, a bar per cell, the cell range and temperatures, then the BMS's own estimate."""
     charging = (p.get("current") or 0) >= 0
     cls = "val-pos" if charging else "val-neg"
     par = f'<span class="bd-pack-par">#{p["parallel"]}</span> ' if p.get("parallel") else ""
@@ -522,18 +522,20 @@ def _pack_card(p):
             f'{max(4.0, min(100.0, (v - CELL_BAR_MIN) / (CELL_BAR_MAX - CELL_BAR_MIN) * 100)):.0f}%"></i>'
             for v in cells)
         strip = f'<div class="bd-cells">{bars}</div>'
-        rng = f"Cells {lo:.3f}–{hi:.3f} V · spread {round((hi - lo) * 1000)} mV"
+        cells_txt = f"Cells {lo:.3f}–{hi:.3f} V"
     else:
         strip = '<div class="bd-cells bd-cells-none">no cell reading this time</div>'
-        rng = "Cells —"
+        cells_txt = "Cells —"
+    temps = (f'{fmt(p.get("temp_min"), 1)}–{fmt(p.get("temp_max"), 1)}°C'
+             if p.get("temp_min") != p.get("temp_max") else f'{fmt(p.get("temp_max"), 1)}°C')
     return (f'<div class="bd-pack"><div class="bd-pack-head">'
             f'<span class="bd-pack-name">{par}{html.escape(str(p.get("name", "")))}</span>'
-            f'<span class="bd-pack-cell {_cell_tone(lo)}">{fmt(lo, 3)}<small> V</small></span></div>'
-            f'{strip}<div class="bd-pack-stats">{rng}</div>'
-            f'<div class="bd-pack-stats">{fmt(p.get("voltage"), 2)} V · '
-            f'<span class="{cls}">{"+" if (a or 0) >= 0 else ""}{fmt(a, 2)} A</span> · '
-            f'{fmt(p.get("temp_max"), 1)}°C</div>'
-            f'<div class="bd-pack-est">Pack\'s own estimate {fmt(p.get("soc"))}% · '
+            f'<span class="bd-pack-va"><span>{fmt(p.get("voltage"), 2)} V</span>'
+            f'<span class="{cls}">{"+" if (a or 0) >= 0 else ""}{fmt(a, 2)} A</span></span>'
+            f'<span class="bd-pack-ah">{fmt(p.get("count_ah"), 1)}<small> Ah</small></span></div>'
+            f'{strip}<div class="bd-pack-stats {_cell_tone(lo) or _cell_tone(hi)}">{cells_txt}</div>'
+            f'<div class="bd-pack-stats">{temps}</div>'
+            f'<div class="bd-pack-est">BMS estimate: {fmt(p.get("soc"))}% · '
             f'{fmt(p.get("residual_ah"), 1)} Ah</div></div>')
 
 
