@@ -161,20 +161,14 @@ function protReasons(mask) {
 
 // Temperatures: show both units, e.g. "25.2°C/77°F" (°F rounded whole).
 const cToF = (c) => Math.round((Number(c) * 9) / 5 + 32);
+const fahrenheit = (c) => (c === null || c === undefined || c === "" || Number.isNaN(Number(c)) ? "—" : String(cToF(c)));
 function tempCF(c) {
   if (c === null || c === undefined || c === "" || Number.isNaN(Number(c))) return "—";
   return `${Number(c).toFixed(1)}°C/${cToF(c)}°F`;
 }
-function tempRangeCF(lo, hi) {
-  if (lo === null || lo === undefined || hi === null || hi === undefined) return "—";
-  if (Number(lo) === Number(hi)) return `${Number(lo).toFixed(1)}°C/${cToF(lo)}°F`;
-  return `${Number(lo).toFixed(1)}–${Number(hi).toFixed(1)}°C / ${cToF(lo)}–${cToF(hi)}°F`;
-}
 
-/* Battery detail: each pack led by what it measures (pack volts and amps) and its share of the
-   counted charge, then a bar per cell, with the pack's own % at the bottom as its BMS estimate. LiFePO4 cells are near-flat in voltage through the middle,
-   so the bars barely move there; they matter at the ends, where the packs' own counts are least
-   trustworthy (they drift high between full charges). */
+/* Battery detail: each pack's volts, amps and temperature in the same three-column row as the
+   Battery bank panel, then a bar per cell, the pack's position/ID and cell range, and its BMS estimate. */
 const CELL_BAR_MIN = 2.8, CELL_BAR_MAX = 3.6;   // bar scale (V)
 const CELL_LOW_WARN = 3.0, CELL_LOW_ALARM = 2.8;  // ~nearly empty under a light load / at the cutoff
 const CELL_HIGH_WARN = 3.55, CELL_HIGH_ALARM = 3.62;
@@ -198,6 +192,7 @@ function renderBatteryDetail(container, d) {
     const charging = (p.current || 0) >= 0;
     const cls = charging ? "val-pos" : "val-neg"; // theme-aware readable text color
     const par = p.parallel ? `<span class="bd-pack-par">#${p.parallel}</span> ` : "";
+    const amps = (charging ? "+" : "") + p.current.toFixed(Math.abs(p.current) < 10 ? 2 : 1);
     const reasons = protReasons(p.protection || 0);
     const hard = (p.protection || 0) & ~PROT_SOFT; // any bit outside the normal voltage cutoffs
     const fault = reasons.length
@@ -211,24 +206,22 @@ function renderBatteryDetail(container, d) {
       : '<div class="bd-cells bd-cells-none">no cell reading this time</div>';
     const cellTxt = cells.length ? `Cells ${lo.toFixed(3)}–${hi.toFixed(3)} V` : "Cells —";
     const cellCls = cellTone(lo) || cellTone(hi);
-    const ah = p.count_ah != null ? p.count_ah.toFixed(1) : "—";
     return `<div class="bd-pack">
-        <div class="bd-pack-head">
-          <span class="bd-pack-name">${par}${p.name}</span>
-          <span class="bd-pack-va"><span>${p.voltage.toFixed(2)} V</span><span class="${cls}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(2)} A</span></span>
-          <span class="bd-pack-ah" title="This pack's share of the charge counted from the last full charge">${ah}<small> Ah</small></span>
+        <div class="batt-foot bd-pack-foot">
+          <div><span>${p.voltage.toFixed(2)}<small> V</small></span><label>Voltage</label></div>
+          <div><span class="${cls}">${amps}<small> A</small></span><label>Current</label></div>
+          <div><span>${fahrenheit(p.temp_max)}<small> °F</small></span><label>Temp</label></div>
         </div>
         ${strip}
+        <div class="bd-pack-name">${par}${p.name}</div>
         <div class="bd-pack-stats ${cellCls}">${cellTxt}</div>
-        <div class="bd-pack-stats">${tempRangeCF(p.temp_min, p.temp_max)}</div>
         ${fault ? `<div class="bd-pack-stats">${fault.replace(/^ · /, "")}</div>` : ""}
         <div class="bd-pack-est">BMS estimate: ${p.soc}% · ${p.residual_ah.toFixed(1)} Ah</div>
       </div>`;
   }).join("");
-  // Cap the single-row layout at 6 columns — past that the cards get too narrow to read.
-  const cols = Math.min(d.packs.length, 6);
-  container.innerHTML = `<div class="bd-packs" style="--bd-cols:${cols}">${cards}</div>` +
-    '<div class="bd-note">Volts, amps and cell voltages are measured. The Ah at the top is each pack\'s share of the charge counted from the last full charge. The BMS estimate is the pack\'s own running count, which drifts high between full charges.</div>';
+  // Six packs to a row on a wide window, three on a mid-width one (see .bd-packs in style.css).
+  const n = d.packs.length;
+  container.innerHTML = `<div class="bd-packs" style="--bd-cols:${Math.min(n, 6)};--bd-cols-mid:${Math.min(n, 3)}">${cards}</div>`;
 }
 
 /* Power-flow diagram — web port of FlowDiagram (ui/SolarFlow.kt): Solar → Inverter → Battery

@@ -137,7 +137,7 @@ function updateTiles(d) {
   const battTemp = bmsBank ? bmsBank.temp_max : d.battery_temp; // BMS temp is real; inverter reads 0
   $("batt_v").textContent = fmt(d.battery_voltage, 2);
   $("batt_a").textContent = (d.battery_current != null && d.battery_current >= 0 ? "+" : "") + fmt(d.battery_current, 1);
-  $("batt_t").textContent = fmt(battTemp, 1);
+  $("batt_t").textContent = battTemp == null ? "—" : fahrenheit(battTemp);
 
   // Secondary tiles — temps in both °C and °F
   $("dc_temp").textContent = tempCF(d.dc_temp);

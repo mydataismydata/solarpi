@@ -322,23 +322,24 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .bd-bank-soc small { font-size: 18px; color: var(--txt2); }
 .bd-bank-cap { font-size: 14px; color: var(--txt); font-weight: 600; }
 .bd-bank-sub { font-size: 12.5px; color: var(--txt3); margin-top: 3px; font-variant-numeric: tabular-nums; }
-/* Narrow screens wrap on their own; from 1040px up every pack sits on one row, using the
-   real pack count (--bd-cols, set by the renderer) so a smaller bank still fills the width. */
+/* Narrow screens wrap on their own; from 640px three packs to a row, and from 1200px every pack on
+   one row (main caps at 1280px, so that's the widest six cards get). The renderer sets the real
+   pack count in --bd-cols / --bd-cols-mid so a smaller bank still fills the width. */
 .bd-packs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-@media (min-width: 1040px) {
-  .bd-packs { grid-template-columns: repeat(var(--bd-cols, 6), minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 640px) {
+  .bd-packs { grid-template-columns: repeat(var(--bd-cols-mid, 3), minmax(0, 1fr)); gap: 10px; }
 }
-/* The head row (name · volts/amps · Ah) scales with the card's own width (cqi), so six cards fit
-   side by side without the pack name wrapping. */
-.bd-pack { background: var(--surface2); border: 1px solid var(--line); border-radius: 14px; padding: 13px 12px; container-type: inline-size; }
-.bd-pack-head { display: flex; align-items: center; gap: 3cqi; white-space: nowrap; }
-.bd-pack-name { font-weight: 600; font-size: clamp(8px, 5.5cqi, 13px); color: var(--txt); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.bd-pack-va { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; font-family: var(--mono); font-weight: 600; font-size: clamp(8px, 5.5cqi, 13px); line-height: 1.2; color: var(--txt); font-variant-numeric: tabular-nums; }
-.bd-pack-ah { font-family: var(--mono); font-weight: 680; font-size: clamp(11px, 8cqi, 20px); color: var(--txt); font-variant-numeric: tabular-nums; }
-.bd-pack-ah small { font-size: 0.6em; color: var(--txt2); }
-.bd-pack-soc { font-family: var(--mono); font-weight: 680; font-size: 22px; color: var(--charge-ink); font-variant-numeric: tabular-nums; }
-.bd-pack-soc small { font-size: 13px; color: var(--txt2); }
-.bd-pack .socbar { margin: 10px 0 8px; }
+@media (min-width: 1200px) {
+  .bd-packs { grid-template-columns: repeat(var(--bd-cols, 6), minmax(0, 1fr)); }
+}
+.bd-pack { background: var(--surface2); border: 1px solid var(--line); border-radius: 14px; padding: 12px 10px; }
+/* The Battery bank panel's volts/amps/temp row (.batt-foot), sized down to fit a pack card. */
+.batt-foot.bd-pack-foot { margin-top: 0; padding-top: 0; }
+.bd-pack-foot > div { gap: 3px; min-width: 0; }
+.bd-pack-foot span { font-size: 13px; white-space: nowrap; }
+.bd-pack-foot small { font-size: 10px; }
+.bd-pack-foot label { font-size: 9px; }
+.bd-pack-name { font-weight: 600; font-size: 13px; color: var(--txt); white-space: nowrap; margin-bottom: 3px; }
 .bd-pack-stats { font-size: 12px; color: var(--txt3); font-variant-numeric: tabular-nums; }
 .bd-pack-stats + .bd-pack-stats { margin-top: 3px; }
 .bd-cells { display: flex; align-items: flex-end; gap: 2px; height: 30px; margin: 10px 0 8px; }
@@ -349,7 +350,6 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .bd-pack-stats.bd-cell-warn { color: var(--discharge-ink); }
 .bd-pack-stats.bd-cell-alarm { color: var(--fault); }
 .bd-pack-est { font-size: 11.5px; color: var(--txt3); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
-.bd-note { font-size: 12px; color: var(--txt3); margin-top: 12px; }
 .bd-fault { color: var(--fault); font-weight: 700; }
 .bd-prot { color: var(--discharge-ink); font-weight: 600; } /* normal voltage cutoff — info, not alarm */
 .bd-empty { color: var(--txt3); font-size: 13px; padding: 24px 0; text-align: center; }

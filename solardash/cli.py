@@ -507,13 +507,18 @@ def _cell_tone(v):
     return ""
 
 
+def _fahrenheit(c):
+    return "—" if c is None else f"{round(c * 9 / 5 + 32)}"
+
+
 def _pack_card(p):
-    """One battery pack, using the dashboard's bd-pack markup: pack volts/amps and its share of the
-    counted Ah on top, a bar per cell, the cell range and temperatures, then the BMS's own estimate."""
+    """One battery pack, using the dashboard's bd-pack markup: volts / amps / temp (°F) in the Battery
+    bank panel's row, a bar per cell, the pack's position/ID and cell range, then its BMS estimate."""
     charging = (p.get("current") or 0) >= 0
     cls = "val-pos" if charging else "val-neg"
     par = f'<span class="bd-pack-par">#{p["parallel"]}</span> ' if p.get("parallel") else ""
     a = p.get("current")
+    amps = "—" if a is None else f'{"+" if a >= 0 else ""}{a:.{2 if abs(a) < 10 else 1}f}'
     cells = p.get("cells") or []
     lo, hi = p.get("cell_min"), p.get("cell_max")
     if cells:
@@ -526,15 +531,12 @@ def _pack_card(p):
     else:
         strip = '<div class="bd-cells bd-cells-none">no cell reading this time</div>'
         cells_txt = "Cells —"
-    temps = (f'{fmt(p.get("temp_min"), 1)}–{fmt(p.get("temp_max"), 1)}°C'
-             if p.get("temp_min") != p.get("temp_max") else f'{fmt(p.get("temp_max"), 1)}°C')
-    return (f'<div class="bd-pack"><div class="bd-pack-head">'
-            f'<span class="bd-pack-name">{par}{html.escape(str(p.get("name", "")))}</span>'
-            f'<span class="bd-pack-va"><span>{fmt(p.get("voltage"), 2)} V</span>'
-            f'<span class="{cls}">{"+" if (a or 0) >= 0 else ""}{fmt(a, 2)} A</span></span>'
-            f'<span class="bd-pack-ah">{fmt(p.get("count_ah"), 1)}<small> Ah</small></span></div>'
-            f'{strip}<div class="bd-pack-stats {_cell_tone(lo) or _cell_tone(hi)}">{cells_txt}</div>'
-            f'<div class="bd-pack-stats">{temps}</div>'
+    return (f'<div class="bd-pack"><div class="batt-foot bd-pack-foot">'
+            f'<div><span>{fmt(p.get("voltage"), 2)}<small> V</small></span><label>Voltage</label></div>'
+            f'<div><span class="{cls}">{amps}<small> A</small></span><label>Current</label></div>'
+            f'<div><span>{_fahrenheit(p.get("temp_max"))}<small> °F</small></span><label>Temp</label></div></div>'
+            f'{strip}<div class="bd-pack-name">{par}{html.escape(str(p.get("name", "")))}</div>'
+            f'<div class="bd-pack-stats {_cell_tone(lo) or _cell_tone(hi)}">{cells_txt}</div>'
             f'<div class="bd-pack-est">BMS estimate: {fmt(p.get("soc"))}% · '
             f'{fmt(p.get("residual_ah"), 1)} Ah</div></div>')
 
@@ -575,7 +577,7 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
     )
     load_amps = (cur.get("load_current") or 0) + (cur.get("load_l2_current") or 0)
     load_panel = _gauge_panel(
-        "load", "AC Output · Load",
+        "load", "AC Out · Load",
         cur.get("load_total"), 4000, "W", "real power · L1+L2",
         load_amps, 40, "A", "current · L1+L2",
         "#9C8CFB", "#9C8CFB",
@@ -605,7 +607,7 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
         '<div class="batt-foot">'
         f'<div><span>{fmt(cur.get("battery_voltage"), 1)}<small> V</small></span><label>Voltage</label></div>'
         f'<div><span>{"+" if (cur.get("battery_current") or 0) >= 0 else ""}{fmt(cur.get("battery_current"), 1)}<small> A</small></span><label>Current</label></div>'
-        f'<div><span>{fmt(batt_temp, 1)}<small> °C</small></span><label>Temp</label></div>'
+        f'<div><span>{_fahrenheit(batt_temp)}<small> °F</small></span><label>Temp</label></div>'
         '</div></div>'
     )
 
@@ -656,10 +658,10 @@ def snapshot_doc(cur, today, hourly, life, batt, hist):
     packs = (batt or {}).get("packs") or []
     if packs:
         packs = sorted(packs, key=lambda p: p.get("parallel") if p.get("parallel") is not None else 99)
-        cols = min(len(packs), 6)  # matches the dashboard's single-row cap in style.css
+        cols, cols_mid = min(len(packs), 6), min(len(packs), 3)  # as the dashboard's renderer sets them
         detail_html = ('<section class="card battery-detail-card"><div class="chart-head">'
                        '<h2>Batteries · Per pack</h2></div>'
-                       f'<div class="bd-packs" style="--bd-cols:{cols}">'
+                       f'<div class="bd-packs" style="--bd-cols:{cols};--bd-cols-mid:{cols_mid}">'
                        f'{"".join(_pack_card(p) for p in packs)}</div></section>')
     else:
         detail_html = ""
