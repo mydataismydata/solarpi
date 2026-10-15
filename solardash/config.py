@@ -111,6 +111,9 @@ class Config:
     inverter_serial: int = 1234567890
     inverter_port: int = 8899
     poll_interval_s: float = 10.0
+    # Hold inverter samples until systemd-timesyncd has synced the clock since boot (see poller.py).
+    # Has no effect where timesyncd isn't running. SOLAR_WAIT_CLOCK_SYNC=0 turns it off.
+    wait_clock_sync: bool = True
     # Remote AC-output on/off control (SRNE 0xDF00 write). OFF by default: the whole feature — API
     # endpoint and dashboard button — stays hidden until you set SOLAR_INVERTER_CONTROL=1 on the Pi.
     inverter_control_enabled: bool = False
@@ -159,6 +162,7 @@ class Config:
             inverter_port=int(os.environ.get("SOLAR_INVERTER_PORT", cls.inverter_port)),
             inverter_control_enabled=os.environ.get("SOLAR_INVERTER_CONTROL", "0") not in ("0", "false", "False"),
             poll_interval_s=float(os.environ.get("SOLAR_POLL_INTERVAL", cls.poll_interval_s)),
+            wait_clock_sync=os.environ.get("SOLAR_WAIT_CLOCK_SYNC", "1") not in ("0", "false", "False"),
             db_path=os.environ.get("SOLAR_DB_PATH", cls.db_path),
             retention_days=int(os.environ.get("SOLAR_RETENTION_DAYS", cls.retention_days)),
             battery_capacity_kwh=float(os.environ.get("SOLAR_BATTERY_CAPACITY_KWH", cls.battery_capacity_kwh)),

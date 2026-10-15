@@ -244,5 +244,88 @@ class PollerTest(unittest.TestCase):
         self.assertIsNone(latest["bms_soc"])  # getter blew up -> NULL, no crash
 
 
+class ClockSyncTest(unittest.TestCase):
+    """Samples taken before the clock syncs after a boot are held, then stored with the synced time."""
+
+    RAW = {0x0100: 87, 0x0101: 532}  # has core battery voltage -> storable
+
+    def make(self, n, synced, socs=None):
+        self.t = {"wall": 1000.0, "mono": 50.0}
+        socs = iter(socs or [None] * n)
+        self.store = TimeSeriesStore(":memory:")
+        self.addCleanup(self.store.close)
+        return Poller(_FakeClient([self.RAW] * n), self.store, clock=lambda: self.t["wall"],
+                      monotonic=lambda: self.t["mono"], clock_synced=synced,
+                      bms_soc_getter=lambda: next(socs))
+
+    def stored(self):
+        return [(r["ts"], r["bms_soc"]) for r in self.store.series(["bms_soc"], 0, 10**10)]
+
+    def test_held_until_synced_then_stamped_from_synced_clock(self):
+        sync = {"ok": False}
+        poller = self.make(3, lambda: sync["ok"], socs=[40.0, 41.0, 42.0])
+        asyncio.run(poller.poll_once())                       # wall 1000 is 12 min slow
+        self.t.update(wall=1010.0, mono=60.0)
+        asyncio.run(poller.poll_once())
+        self.assertEqual(self.store.count(), 0)
+        self.assertEqual(poller.held, 2)
+        sync["ok"] = True
+        self.t.update(wall=1780.0, mono=70.0)                 # NTP stepped the clock forward
+        asyncio.run(poller.poll_once())
+        self.assertEqual(poller.held, 0)
+        self.assertEqual(self.stored(), [(1760, 40.0), (1770, 41.0), (1780, 42.0)])
+        self.assertEqual(poller.last_ts, 1780)
+
+    def test_never_holds_again_once_synced(self):
+        sync = {"ok": True}
+        poller = self.make(2, lambda: sync["ok"])
+        asyncio.run(poller.poll_once())
+        sync["ok"] = False                                    # e.g. timesyncd restarted
+        self.t.update(wall=1010.0, mono=60.0)
+        asyncio.run(poller.poll_once())
+        self.assertEqual([ts for ts, _ in self.stored()], [1000, 1010])
+
+    def test_stops_holding_after_max_wait(self):
+        from solardash.poller import MAX_CLOCK_WAIT_S
+
+        poller = self.make(2, lambda: False)
+        asyncio.run(poller.poll_once())
+        self.t.update(wall=1000.0 + MAX_CLOCK_WAIT_S, mono=50.0 + MAX_CLOCK_WAIT_S)
+        asyncio.run(poller.poll_once())
+        self.assertEqual([ts for ts, _ in self.stored()], [1000, int(1000 + MAX_CLOCK_WAIT_S)])
+
+    def test_check_error_counts_as_synced(self):
+        def boom():
+            raise OSError("no /run")
+
+        poller = self.make(1, boom)
+        asyncio.run(poller.poll_once())
+        self.assertEqual(self.store.count(), 1)
+
+    def test_timesync_synced_reads_timesyncd_flag(self):
+        import tempfile
+
+        from solardash.poller import timesync_synced
+
+        with tempfile.TemporaryDirectory() as d:
+            run_dir = os.path.join(d, "timesync")
+            self.assertTrue(timesync_synced(run_dir))         # no timesyncd: nothing to wait for
+            os.mkdir(run_dir)
+            self.assertFalse(timesync_synced(run_dir))        # running, not synced yet
+            open(os.path.join(run_dir, "synchronized"), "w").close()
+            self.assertTrue(timesync_synced(run_dir))
+
+    def test_config_switch(self):
+        from unittest import mock
+
+        from solardash.config import Config
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SOLAR_WAIT_CLOCK_SYNC", None)
+            self.assertTrue(Config.from_env().wait_clock_sync)
+            os.environ["SOLAR_WAIT_CLOCK_SYNC"] = "0"
+            self.assertFalse(Config.from_env().wait_clock_sync)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -25,7 +25,7 @@ from .client import InverterClient, InverterControl
 from .config import Config
 from .db import TimeSeriesStore
 from .faults import FaultCatalog
-from .poller import Poller
+from .poller import Poller, timesync_synced
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 BANK_NOMINAL_V = 16 * CELL_NOMINAL_V  # 16S LiFePO4: 51.2 V
@@ -92,8 +92,9 @@ async def lifespan(app: FastAPI):
         store, bank_key(cfg.bms_addresses if cfg.bms_enabled else []), _capacity_ah(cfg),
         full_v=cfg.battery_full_v,
     )
+    # Samples wait for the clock to sync after a boot, so they don't land minutes early (poller.py).
     poller = Poller(client, store, interval_s=cfg.poll_interval_s, bms_soc_getter=_bms_bank_soc,
-                    charge_counter=counter)
+                    charge_counter=counter, clock_synced=timesync_synced if cfg.wait_clock_sync else None)
     # Shares the client (and thus its socket lock) with the poller, so an output command and a poll
     # read never talk to the dongle at once. Endpoint stays gated on cfg.inverter_control_enabled.
     inverter_control = InverterControl(client)
@@ -318,6 +319,7 @@ async def health():
         "poll_interval_s": cfg.poll_interval_s,
         "last_ts": poller.last_ts,
         "consecutive_failures": poller.consecutive_failures,
+        "held_for_clock_sync": poller.held,
         "bms": {
             "enabled": cfg.bms_enabled,
             "packs": bp.bank.packs if (bp and bp.bank) else 0,

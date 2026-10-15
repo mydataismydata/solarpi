@@ -335,6 +335,9 @@ default (see `solardash/config.py`); a real deployment usually sets:
 SOLAR_INVERTER_IP=192.168.#.#
 SOLAR_INVERTER_SERIAL=1234567890     # the serial printed on the dongle
 SOLAR_POLL_INTERVAL=10
+# The Pi has no hardware clock, so after a power cut it boots slow until NTP answers. Readings
+# taken before then are held and stored with the corrected time (up to 8 hours). 0 turns this off.
+SOLAR_WAIT_CLOCK_SYNC=1
 # Remote AC-output on/off (writes SRNE register 0xDF00). OFF by default — set to 1 to expose
 # the guarded power button on the AC Output panel. It cuts the WHOLE inverter output, so only
 # enable it if the Pi + dongle are on a UPS (otherwise a remote OFF also kills the dashboard).
