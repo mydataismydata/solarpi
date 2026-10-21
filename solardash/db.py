@@ -156,18 +156,21 @@ class TimeSeriesStore:
             )
             # All-time peak instantaneous power (W): a single row holding the highest pv_power /
             # load_total ever sampled. Rolled forward on insert() so the lifetime-peak read is O(1)
-            # (no full-table scan every minute) and survives sample pruning. Seeded from any history
-            # already on disk so an upgrade reflects past peaks immediately.
+            # (no full-table scan every minute) and survives sample pruning. Seeded once from any
+            # history already on disk so an upgrade reflects past peaks immediately.
             self._conn.execute(
                 "CREATE TABLE IF NOT EXISTS energy_peaks (\n"
                 "  id INTEGER PRIMARY KEY CHECK (id = 1),\n"
                 "  pv_w REAL NOT NULL DEFAULT 0,\n"
                 "  load_w REAL NOT NULL DEFAULT 0\n)"
             )
-            self._conn.execute(
-                "INSERT OR IGNORE INTO energy_peaks (id, pv_w, load_w) "
-                "SELECT 1, COALESCE(MAX(pv_power), 0), COALESCE(MAX(load_total), 0) FROM inverter_samples"
-            )
+            # Only when the row is missing: the seed reads every sample (seconds on the Pi, growing
+            # with history), and insert() keeps the row current from then on.
+            if self._conn.execute("SELECT 1 FROM energy_peaks WHERE id = 1").fetchone() is None:
+                self._conn.execute(
+                    "INSERT INTO energy_peaks (id, pv_w, load_w) "
+                    "SELECT 1, COALESCE(MAX(pv_power), 0), COALESCE(MAX(load_total), 0) FROM inverter_samples"
+                )
             self._conn.commit()
 
     def insert(self, status: InverterStatus, ts: Optional[int] = None, bms_soc: Optional[float] = None,

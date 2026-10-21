@@ -1,8 +1,11 @@
 """Energy accrual + roll-up tests, and the poller's power->energy integration."""
 import asyncio
 import os
+import sqlite3
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -70,6 +73,57 @@ class EnergyStoreTest(unittest.TestCase):
         self.assertAlmostEqual(e["buckets"][0]["pv_kwh"], 1.5, places=3)
         self.assertEqual(api.energy_payload(self.store, period="bogus")["period"], "day")
         self.assertAlmostEqual(api.lifetime_payload(self.store)["load_kwh"], 1.0, places=3)
+
+
+class EnergyPeaksSeedTest(unittest.TestCase):
+    """The all-time peak row is seeded from history once, not re-scanned on every start."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self._dir.name, "solar.sqlite")
+        store = TimeSeriesStore(self.path)
+        store.insert(inverter.InverterStatus(pv1_voltage=100.0, pv1_current=20.0, load_power=1500), ts=10)
+        store.close()
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _open_traced(self):
+        """Open the store, returning it with every SQL statement it ran while opening."""
+        statements = []
+        real_connect = sqlite3.connect
+
+        def connect(*args, **kwargs):
+            conn = real_connect(*args, **kwargs)
+            conn.set_trace_callback(statements.append)
+            return conn
+
+        with mock.patch("solardash.db.sqlite3.connect", side_effect=connect):
+            store = TimeSeriesStore(self.path)
+        return store, statements
+
+    def test_seeds_from_samples_when_row_missing(self):
+        # A DB from before energy_peaks existed: samples on disk, no peak row.
+        conn = sqlite3.connect(self.path)
+        conn.execute("DROP TABLE energy_peaks")
+        conn.commit()
+        conn.close()
+        store, statements = self._open_traced()
+        try:
+            lt = store.energy_lifetime()
+            self.assertAlmostEqual(lt["pv_peak_w"], 2000.0, places=1)
+            self.assertAlmostEqual(lt["load_peak_w"], 1500.0, places=1)
+            self.assertTrue(any("MAX(pv_power)" in s for s in statements))
+        finally:
+            store.close()
+
+    def test_skips_sample_scan_when_row_exists(self):
+        store, statements = self._open_traced()
+        try:
+            self.assertFalse(any("FROM inverter_samples" in s for s in statements))
+            self.assertAlmostEqual(store.energy_lifetime()["pv_peak_w"], 2000.0, places=1)
+        finally:
+            store.close()
 
 
 class PollerEnergyTest(unittest.TestCase):
