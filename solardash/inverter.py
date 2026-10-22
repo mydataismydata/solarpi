@@ -155,11 +155,30 @@ def has_core(raw: Dict[int, int]) -> bool:
     return raw.get(0x0101, 0) > 0
 
 
+# Unsigned load power / apparent-power registers (L1 W, L1 VA, L2 W, L2 VA). A value with the top
+# bit set (32.8 kW or more) is far past anything the inverter can deliver, so the block it came in
+# is garbled. On 27 Jun 2026 one reply read L2 power as 65,204 W (0xFEB4) and L2 apparent as 0.
+LOAD_POWER_REGS = (0x021B, 0x021C, 0x0232, 0x0234)
+
+
+def drop_garbled(fresh: Dict[int, int]) -> Dict[int, int]:
+    """Remove every block of `fresh` that holds an impossible load power, so merge() carries the
+    previous values forward as it does for a block the read missed."""
+    out = dict(fresh)
+    for start, count in BLOCKS:
+        block = range(start, start + count)
+        if any(fresh.get(a, 0) & 0x8000 for a in LOAD_POWER_REGS if a in block):
+            for a in block:
+                out.pop(a, None)
+    return out
+
+
 def merge(previous: Optional[Dict[int, int]], fresh: Dict[int, int]) -> Dict[int, int]:
     """Overlay `fresh` registers onto `previous`, carrying forward any register a partial read
-    missed. Registers returned this cycle (including legitimate zeros, e.g. PV at night) win."""
+    missed or that came in a garbled block (drop_garbled). Registers returned this cycle
+    (including legitimate zeros, e.g. PV at night) win."""
     out: Dict[int, int] = {}
     if previous:
         out.update(previous)
-    out.update(fresh)
+    out.update(drop_garbled(fresh))
     return out

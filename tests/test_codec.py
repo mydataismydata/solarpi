@@ -122,6 +122,33 @@ class InverterDecodeTest(unittest.TestCase):
         self.assertEqual(merged[0x0101], 532)   # fresh wins
         self.assertEqual(merged[0x0107], 1000)  # carried forward
 
+    def test_merge_carries_forward_garbled_l2_block(self):
+        # The 27 Jun 2026 reply: L2 power 0xFEB4 (65,204 W), L2 apparent 0, L2 current 6.9 A.
+        prev = {0x0101: 532, 0x021B: 498, 0x021C: 528, 0x0230: 49, 0x0232: 561, 0x0234: 602}
+        fresh = {0x0101: 533, 0x021B: 497, 0x021C: 526, 0x0230: 69, 0x0232: 0xFEB4, 0x0234: 0}
+        merged = inverter.merge(prev, fresh)
+        self.assertEqual(merged[0x0101], 533)  # other blocks still take this read
+        self.assertEqual(merged[0x021B], 497)
+        self.assertEqual((merged[0x0230], merged[0x0232], merged[0x0234]), (49, 561, 602))  # whole block held
+        self.assertEqual(inverter.decode(merged).load_total, 1058)
+
+    def test_merge_drops_garbled_l1_block(self):
+        prev = {0x0101: 532, 0x0216: 1200, 0x021B: 143}
+        fresh = {0x0101: 533, 0x0216: 1043, 0x021B: 0x8000}
+        merged = inverter.merge(prev, fresh)
+        self.assertEqual((merged[0x0216], merged[0x021B]), (1200, 143))
+
+    def test_garbled_block_without_history_is_left_unread(self):
+        s = inverter.decode(inverter.merge(None, {0x0101: 533, 0x021B: 498, 0x0232: 0xFEB4}))
+        self.assertEqual(s.load_power, 498)
+        self.assertIsNone(s.load_l2_power)
+        self.assertEqual(s.load_total, 498)
+
+    def test_real_surge_is_kept(self):
+        # 18 Oct 2026 07:51:10: a 5,166 W L1 surge with the output sagging to 104.3 V is a real reading.
+        fresh = {0x0101: 533, 0x0216: 1043, 0x021B: 5166, 0x021C: 5873}
+        self.assertEqual(inverter.merge({0x021B: 143}, fresh)[0x021B], 5166)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
